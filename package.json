@@ -1,0 +1,29 @@
+{
+  "name": "api-framwork",
+  "version": "1.0.0",
+  "description": "simplifies the creation of restful api for an entity",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/periasamychellamuthu/node-api-framework.git"
+  },
+  "keywords": [
+    "api-framework",
+    "framework",
+    "node-api",
+    "api"
+  ],
+  "author": "ravi",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/periasamychellamuthu/node-api-framework/issues"
+  },
+  "homepage": "https://github.com/periasamychellamuthu/node-api-framework#readme",
+  "dependencies": {
+    "mysql": "^2.18.1",
+    "node-querybuilder": "^2.1.1",
+    "querybuilder": "^1.1.0"
+  }
+}
