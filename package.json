@@ -15,8 +15,8 @@
     "node-api",
     "api"
   ],
-  "author": "ravi",
-  "license": "ISC",
+  "author": "periasamy",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/periasamychellamuthu/node-api-framework/issues"
   },
