@@ -1,5 +1,5 @@
 {
-  "name": "api-framwork",
+  "name": "api-framework",
   "version": "1.0.0",
   "description": "simplifies the creation of restful api for an entity",
   "scripts": {
