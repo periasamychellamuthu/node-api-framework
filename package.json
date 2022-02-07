@@ -1,6 +1,6 @@
 {
-  "name": "api-framework",
-  "version": "1.0.0",
+  "name": "api-framework-rest",
+  "version": "1.0.1",
   "description": "simplifies the creation of restful api for an entity",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -25,5 +25,8 @@
     "mysql": "^2.18.1",
     "node-querybuilder": "^2.1.1",
     "querybuilder": "^1.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
