@@ -1,6 +1,6 @@
-const SQLConnect = require('../MYSQL/MYSQLConnect');
-const sqlQueryBuilder = require('../MYSQL/MYSQLQueryGeneratorAndExecutor');
-const Entity = require('../Api/Entity');
+const SQLConnect = require('../src/database/MYSQL/connect');
+const sqlQueryBuilder = require('../src/database/MYSQL/queryGeneratorAndExecutor');
+const Entity = require('./API/Entity');
 
 function DefaultEntityHandler(){
     this.APIRequest = null;
