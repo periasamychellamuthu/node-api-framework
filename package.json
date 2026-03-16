@@ -2,8 +2,8 @@
     "name": "api-framework-rest",
     "version": "1.1.0",
     "description": "Simplifies the creation of restful api for an entity",
-    "author":{
-        "name":"Ravi",
+    "author": {
+        "name": "Ravi",
         "email": "ravi118c@gmail.com"
     },
     "private": true,
@@ -27,14 +27,14 @@
         "jade": "^1.11.0",
         "jsonwebtoken": "^8.5.1",
         "morgan": "^1.10.0",
-        "multer": "^1.4.3", 
-        "mysql": "^2.18.1",
+        "multer": "^1.4.3",
+        "mysql": "npm:mysql2@^2.3.3",
         "node-querybuilder": "^2.1.1",
         "passport": "^0.4.1",
         "querybuilder": "^1.1.0",
         "serve-favicon": "^2.5.0"
-      },
-      "devDependencies": {
+    },
+    "devDependencies": {
         "nodemon": "^2.0.12"
-      }
+    }
 }
