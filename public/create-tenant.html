@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Organization — Versatile Platform</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            color: #e0e0e0;
+        }
+        .card {
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 48px 40px;
+            width: 100%; max-width: 480px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.4);
+        }
+        .card h1 {
+            font-size: 26px; font-weight: 700; margin-bottom: 8px;
+            background: linear-gradient(90deg, #fbbf24, #f59e0b);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .card p.subtitle { font-size: 14px; color: #9ca3af; margin-bottom: 32px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label {
+            display: block; font-size: 13px; font-weight: 500; color: #9ca3af;
+            margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .form-group input {
+            width: 100%; padding: 12px 16px;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px; color: #f0f0f0; font-size: 15px; font-family: inherit;
+            transition: border-color 0.2s, box-shadow 0.2s; outline: none;
+        }
+        .form-group input:focus { border-color: #fbbf24; box-shadow: 0 0 0 3px rgba(251,191,36,0.15); }
+        .form-group input::placeholder { color: #6b7280; }
+        .btn-primary {
+            width: 100%; padding: 14px;
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            border: none; border-radius: 10px; color: #111827;
+            font-size: 15px; font-weight: 600; cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.2s; margin-top: 8px;
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(251,191,36,0.3); }
+        .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .error-msg {
+            background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
+            color: #fca5a5; padding: 12px 16px; border-radius: 10px;
+            font-size: 13px; margin-bottom: 20px; display: none;
+        }
+        .success-msg {
+            background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.3);
+            color: #6ee7b7; padding: 12px 16px; border-radius: 10px;
+            font-size: 13px; margin-bottom: 20px; display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Create Organization</h1>
+        <p class="subtitle">Set up your workspace to start using Versatile Platform</p>
+
+        <div class="error-msg" id="errorMsg"></div>
+        <div class="success-msg" id="successMsg"></div>
+
+        <form id="tenantForm">
+            <div class="form-group">
+                <label for="name">Organization Name</label>
+                <input type="text" id="name" placeholder="e.g. Acme Corp" required>
+            </div>
+            <div class="form-group">
+                <label for="domain">Domain</label>
+                <input type="text" id="domain" placeholder="e.g. acme.com" required>
+            </div>
+            <div class="form-group">
+                <label for="contact_email">Contact Email</label>
+                <input type="email" id="contact_email" placeholder="admin@acme.com" required>
+            </div>
+            <button type="submit" class="btn-primary" id="submitBtn">Create Organization</button>
+        </form>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            window.location.href = '/login';
+        }
+
+        const form = document.getElementById('tenantForm');
+        const errorMsg = document.getElementById('errorMsg');
+        const successMsg = document.getElementById('successMsg');
+        const submitBtn = document.getElementById('submitBtn');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorMsg.style.display = 'none';
+            successMsg.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creating...';
+
+            try {
+                // Single IAM endpoint: creates tenant + links account + seeds roles
+                const resp = await fetch('/api/v1/create-tenant', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        input_data: {
+                            tenant: {
+                                name: document.getElementById('name').value,
+                                domain: document.getElementById('domain').value,
+                                contact_email: document.getElementById('contact_email').value,
+                                subscription_status: 'Active'
+                            }
+                        }
+                    })
+                });
+
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    successMsg.textContent = 'Organization created! Redirecting to login...';
+                    successMsg.style.display = 'block';
+
+                    // Re-login to get fresh token with tenant + roles
+                    setTimeout(() => { window.location.href = '/login'; }, 1500);
+                } else {
+                    errorMsg.textContent = (data.response_status && data.response_status.message) || 'Creation failed';
+                    errorMsg.style.display = 'block';
+                }
+            } catch (err) {
+                errorMsg.textContent = 'Network error. Please try again.';
+                errorMsg.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Create Organization';
+            }
+        });
+    </script>
+</body>
+</html>

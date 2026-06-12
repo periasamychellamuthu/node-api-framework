@@ -1,0 +1,22 @@
+<security>
+	<jsontemplate name="user_unique" disable-extra-key="true">
+		<key name="name" regex="alpha_numeric" max-len="100" max-occurence="1" />
+		<key name="first_name" regex="alpha_numeric" max-len="100" max-occurence="1" />
+		<key name="last_name" regex="alpha_numeric" max-len="100" max-occurence="1" />
+		<key name="email_address" regex="email" max-len="100" max-occurence="1" />
+		<key name="phone_number" regex="phone" max-len="20" max-occurence="1" />
+		<key name="password" regex="safe_string" max-len="100" max-occurence="1" />
+	</jsontemplate>
+	<jsontemplate name="tenant_unique" disable-extra-key="true">
+		<key name="name" regex="alpha_numeric" max-len="100" max-occurence="1" />
+		<key name="domain" regex="safe_string" max-len="150" max-occurence="1" />
+		<key name="contact_email" regex="email" max-len="150" max-occurence="1" />
+		<key name="subscription_status" regex="alpha_numeric" max-len="30" max-occurence="1" />
+	</jsontemplate>
+	<jsontemplate name="user_api_template" disable-extra-key="true">
+		<key name="user" type="JSONObject" template="user_unique" />
+	</jsontemplate>
+	<jsontemplate name="tenant_api_template" disable-extra-key="true">
+		<key name="tenant" type="JSONObject" template="tenant_unique" />
+	</jsontemplate>
+</security>

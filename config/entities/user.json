@@ -1,0 +1,71 @@
+{
+  "entityName": "user",
+  "pluralName": "users",
+  "path": "/users",
+  "tableName": "users",
+  "handler": "UserEntityHandler",
+  "validator": "DefaultEntityValidator",
+  "listener": "DefaultEntityListener",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string",
+      "identifier": true,
+      "nullable": false
+    },
+    {
+      "name": "username",
+      "type": "string",
+      "nullable": false,
+      "unique": true
+    },
+    {
+      "name": "email",
+      "type": "string",
+      "nullable": false,
+      "unique": true,
+      "constraints": {
+        "regex": "email"
+      }
+    }
+  ],
+  "operations": [
+    {
+      "name": "get_list",
+      "method": "get",
+      "without_id": true,
+      "description": "Fetch all users"
+    },
+    {
+      "name": "get",
+      "method": "get",
+      "without_id": false,
+      "description": "Fetch isolated user"
+    },
+    {
+      "name": "add",
+      "method": "post",
+      "without_id": true,
+      "description": "Create new user"
+    },
+    {
+      "name": "edit",
+      "method": "put",
+      "without_id": false,
+      "description": "Modify user"
+    },
+    {
+      "name": "delete",
+      "method": "delete",
+      "without_id": false,
+      "description": "Remove user"
+    },
+    {
+      "name": "activate",
+      "method": "post",
+      "without_id": false,
+      "roles": ["Admin"],
+      "description": "Activate user account"
+    }
+  ]
+}

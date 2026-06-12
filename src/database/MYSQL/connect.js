@@ -32,19 +32,39 @@ function MySQLConnect(){
                 console.log("connection resolved");
                 return resolve(this.pool);
             }
-            this.pool = mysql.createPool({
+
+            // Generate Dataspace physically if absent
+            const tempConnection = mysql.createConnection({
                 host: sqlConstants.host,
                 user: sqlConstants.user,
                 password: sqlConstants.password,
-                database: sqlConstants.database
+                port: sqlConstants.port
             });
-            mysql.Promise = global.Promise;
-            this.pool.getConnection(function(err,connection){
-                console.log(err+'and pool is'+this.pool);
-                connection.release();
-               if (err) reject(err);
-               resolve(this.pool);
-           });
+
+            tempConnection.query(`CREATE DATABASE IF NOT EXISTS \`${sqlConstants.database}\``, (err) => {
+                tempConnection.end();
+                if (err) {
+                    console.error("[MySQL] Failed to create or confirm Dataspace:", err.message);
+                    return reject(err);
+                }
+
+                // Proceed with functional database pool binding
+                this.pool = mysql.createPool({
+                    host: sqlConstants.host,
+                    user: sqlConstants.user,
+                    password: sqlConstants.password,
+                    database: sqlConstants.database,
+                    port: sqlConstants.port
+                });
+
+                mysql.Promise = global.Promise;
+                this.pool.getConnection((err, connection) => {
+                    if (err) return reject(err);
+                    console.log(`[MySQL] Connection Pool verified on Dataspace '${sqlConstants.database}'`);
+                    connection.release();
+                    resolve(this.pool);
+                });
+            });
         });
     }
 
@@ -56,10 +76,18 @@ function MySQLConnect(){
 
     this.runBuilder = function(cbk,APIRequest){
         builderObject.get_connection(db => {
+            if (!db) {
+                console.error("[MySQLConnect] Connection acquisition failure");
+                if(APIRequest && APIRequest.response) {
+                    APIRequest.response.status(500).json({ error: "Service degraded: Database pool exhausted." });
+                }
+                return;
+            }
             db.get = function(table, cb, conn){
                 // The table parameter is optional, it could be the cb...
                 if (typeof table === 'function' && typeof cb !== 'function') {
                     cb = table;
+                    table = undefined;
                 }
             
                 var sql_Query = this._get(table);
@@ -69,7 +97,7 @@ function MySQLConnect(){
                 if (typeof cb !== "function") return new WrapperPromise(sql, this._exec.bind(this)).promisify();
                 this._exec(sql, cb);
             }
-            cbk(db,APIrequest);
+            cbk(db,APIRequest);
         });
     }
 }

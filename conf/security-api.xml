@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<security>
+	<!-- User Endpoints -->
+	<url path="/api/v1/users" method="POST" csrf="true" operation-type="CREATE" roles="CreateRequests">
+		<param name="input_data" template="user_api_template" max-len="1" max-occurence="1" />
+	</url>
+	<url path="/api/v1/users" method="GET" csrf="true" operation-type="READ" roles="ReadRequests">
+	</url>
+	<url path="/api/v1/users" method="PUT" csrf="true" operation-type="UPDATE" roles="UpdateRequests">
+		<param name="input_data" template="user_api_template" max-len="1" max-occurence="1" />
+	</url>
+	<url path="/api/v1/users" method="DELETE" csrf="true" operation-type="DELETE" roles="DeleteRequests">
+	</url>
+
+    <url path="/api/v1/users/:id" method="GET" csrf="true" operation-type="READ" roles="Admin,User" />
+    <url path="/api/v1/users/:id" method="PUT" csrf="true" operation-type="UPDATE" roles="Admin,User" />
+    <url path="/api/v1/users/:id" method="DELETE" csrf="true" operation-type="DELETE" roles="Admin" />
+    
+    <url path="/api/v1/users/_metainfo" method="GET" roles="Admin,User" />
+    <url path="/api/v1/users/_links" method="GET" roles="Admin,User" />
+    <url path="/api/v1/users/:id/_activate" method="POST" roles="Admin" />
+
+	<!-- Tenancy Onboarding Operations -->
+	<url path="/api/v1/tenants" method="POST" csrf="true" operation-type="CREATE" roles="CreateRequests,SystemUser">
+		<param name="input_data" template="tenant_api_template" max-len="1" max-occurence="1" />
+	</url>
+	<url path="/api/v1/tenants" method="GET" csrf="true" operation-type="READ" roles="ReadRequests,SystemUser">
+	</url>
+	<url path="/api/v1/tenants" method="PUT" csrf="true" operation-type="UPDATE" roles="UpdateRequests,SystemUser">
+		<param name="input_data" template="tenant_api_template" max-len="1" max-occurence="1" />
+	</url>
+	<url path="/api/v1/tenants" method="DELETE" csrf="true" operation-type="DELETE" roles="DeleteRequests,SystemUser">
+	</url>
+
+    <url path="/api/v1/tenants/:id" method="GET" roles="Admin,User" />
+    <url path="/api/v1/tenants/:id" method="PUT" roles="Admin,User" />
+    <url path="/api/v1/tenants/:id" method="DELETE" roles="Admin" />
+    <url path="/api/v1/tenants/_metainfo" method="GET" roles="Admin,User" />
+    <url path="/api/v1/tenants/_links" method="GET" roles="Admin,User" />
+</security>

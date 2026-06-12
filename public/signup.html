@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Up — Versatile Platform</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            color: #e0e0e0;
+        }
+        .auth-card {
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 48px 40px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.4);
+        }
+        .auth-card h1 {
+            font-size: 28px; font-weight: 700; margin-bottom: 8px;
+            background: linear-gradient(90deg, #34d399, #6ee7b7);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .auth-card p.subtitle { font-size: 14px; color: #9ca3af; margin-bottom: 32px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label {
+            display: block; font-size: 13px; font-weight: 500; color: #9ca3af;
+            margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .form-group input {
+            width: 100%; padding: 12px 16px;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px; color: #f0f0f0; font-size: 15px; font-family: inherit;
+            transition: border-color 0.2s, box-shadow 0.2s; outline: none;
+        }
+        .form-group input:focus { border-color: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,0.15); }
+        .form-group input::placeholder { color: #6b7280; }
+        .btn-primary {
+            width: 100%; padding: 14px;
+            background: linear-gradient(135deg, #34d399, #6ee7b7);
+            border: none; border-radius: 10px; color: #111827;
+            font-size: 15px; font-weight: 600; cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.2s; margin-top: 8px;
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(52,211,153,0.3); }
+        .btn-primary:active { transform: translateY(0); }
+        .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .error-msg {
+            background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
+            color: #fca5a5; padding: 12px 16px; border-radius: 10px;
+            font-size: 13px; margin-bottom: 20px; display: none;
+        }
+        .switch-link { text-align: center; margin-top: 24px; font-size: 14px; color: #9ca3af; }
+        .switch-link a { color: #34d399; text-decoration: none; font-weight: 500; }
+        .switch-link a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="auth-card">
+        <h1>Create Account</h1>
+        <p class="subtitle">Get started with Versatile Platform</p>
+
+        <div class="error-msg" id="errorMsg"></div>
+
+        <form id="signupForm">
+            <div class="form-group">
+                <label for="display_name">Display Name</label>
+                <input type="text" id="display_name" placeholder="Your full name" required>
+            </div>
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" placeholder="you@example.com" required autocomplete="email">
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" placeholder="Minimum 8 characters" required minlength="8" autocomplete="new-password">
+            </div>
+            <button type="submit" class="btn-primary" id="submitBtn">Create Account</button>
+        </form>
+
+        <div class="switch-link">
+            Already have an account? <a href="/login">Sign in</a>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('signupForm');
+        const errorMsg = document.getElementById('errorMsg');
+        const submitBtn = document.getElementById('submitBtn');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorMsg.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creating account...';
+
+            try {
+                const resp = await fetch('/auth/signup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        input_data: {
+                            auth_account: {
+                                email: document.getElementById('email').value,
+                                password: document.getElementById('password').value,
+                                display_name: document.getElementById('display_name').value
+                            }
+                        }
+                    })
+                });
+
+                const data = await resp.json();
+
+                if (resp.ok && data.token) {
+                    localStorage.setItem('access_token', data.token.access_token);
+                    localStorage.setItem('refresh_token', data.token.refresh_token);
+                    localStorage.setItem('account', JSON.stringify(data.auth_account));
+                    window.location.href = '/';
+                } else {
+                    errorMsg.textContent = data.response_status?.message || 'Signup failed';
+                    errorMsg.style.display = 'block';
+                }
+            } catch (err) {
+                errorMsg.textContent = 'Network error. Please try again.';
+                errorMsg.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Create Account';
+            }
+        });
+    </script>
+</body>
+</html>

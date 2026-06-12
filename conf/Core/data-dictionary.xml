@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<data-dictionary name="core">
+  <table name="users">
+    <description>Core User Base</description>
+    <columns>
+        <column name="id">
+            <description>Unique Identifier</description>
+            <data-type>BIGINT</data-type>
+            <max-size>19</max-size>
+            <nullable>false</nullable>
+            <uniquevalue-generation>
+                <generator-name>users.id</generator-name>
+            </uniquevalue-generation>
+        </column>
+        <column name="username">
+            <description>Account Authentication Name</description>
+            <data-type>CHAR</data-type>
+            <max-size>50</max-size>
+            <nullable>false</nullable>
+            <unique>true</unique>
+        </column>
+        <column name="email">
+            <description>Personal Email Address</description>
+            <data-type>CHAR</data-type>
+            <max-size>150</max-size>
+            <nullable>false</nullable>
+            <unique>true</unique>
+        </column>
+    </columns>
+    <primary-key name="users_PK">
+      <primary-key-column>id</primary-key-column>
+    </primary-key>
+  </table>
+  <table name="tenants">
+    <description>Core Tenant Container tracking Organization Isolations</description>
+    <columns>
+        <column name="id">
+            <description>Unique Tenancy Identifier physically establishing bounds</description>
+            <data-type>BIGINT</data-type>
+            <max-size>19</max-size>
+            <nullable>false</nullable>
+            <uniquevalue-generation>
+                <generator-name>tenants.id</generator-name>
+            </uniquevalue-generation>
+        </column>
+        <column name="name">
+            <description>Platform Workspace Identifier Name</description>
+            <data-type>CHAR</data-type>
+            <max-size>100</max-size>
+            <nullable>false</nullable>
+            <unique>true</unique>
+        </column>
+        <column name="domain">
+            <description>Organization URL Binding</description>
+            <data-type>CHAR</data-type>
+            <max-size>150</max-size>
+            <nullable>false</nullable>
+            <unique>true</unique>
+        </column>
+        <column name="contact_email">
+            <description>Primary Communication Email</description>
+            <data-type>CHAR</data-type>
+            <max-size>150</max-size>
+            <nullable>false</nullable>
+            <unique>true</unique>
+        </column>
+        <column name="subscription_status">
+            <description>Current Operating Status</description>
+            <data-type>CHAR</data-type>
+            <max-size>30</max-size>
+            <nullable>false</nullable>
+        </column>
+    </columns>
+    <primary-key name="tenants_PK">
+      <primary-key-column>id</primary-key-column>
+    </primary-key>
+  </table>
+  <table name="auth_accounts">
+    <description>Platform Authentication Accounts (Login Identity)</description>
+    <columns>
+        <column name="id">
+            <description>Unique Account Identifier</description>
+            <data-type>BIGINT</data-type>
+            <max-size>19</max-size>
+            <nullable>false</nullable>
+            <uniquevalue-generation>
+                <generator-name>auth_accounts.id</generator-name>
+            </uniquevalue-generation>
+        </column>
+        <column name="email">
+            <description>Login Email Address</description>
+            <data-type>CHAR</data-type>
+            <max-size>255</max-size>
+            <nullable>false</nullable>
+            <unique>true</unique>
+        </column>
+        <column name="password_hash">
+            <description>Bcrypt Hashed Password</description>
+            <data-type>CHAR</data-type>
+            <max-size>255</max-size>
+            <nullable>false</nullable>
+        </column>
+        <column name="display_name">
+            <description>Account Display Name</description>
+            <data-type>CHAR</data-type>
+            <max-size>100</max-size>
+            <nullable>false</nullable>
+        </column>
+        <column name="status">
+            <description>Account Status (active, inactive, locked)</description>
+            <data-type>CHAR</data-type>
+            <max-size>20</max-size>
+            <nullable>false</nullable>
+        </column>
+        <column name="created_at">
+            <description>Account Creation Timestamp</description>
+            <data-type>BIGINT</data-type>
+            <max-size>19</max-size>
+            <nullable>false</nullable>
+        </column>
+    </columns>
+    <primary-key name="auth_accounts_PK">
+      <primary-key-column>id</primary-key-column>
+    </primary-key>
+  </table>
+  <table name="account_tenants">
+    <description>Links Auth Accounts to Tenants (multi-tenant membership)</description>
+    <columns>
+        <column name="id">
+            <description>Unique Row Identifier</description>
+            <data-type>BIGINT</data-type>
+            <max-size>19</max-size>
+            <nullable>false</nullable>
+            <uniquevalue-generation>
+                <generator-name>account_tenants.id</generator-name>
+            </uniquevalue-generation>
+        </column>
+        <column name="account_id">
+            <description>FK to auth_accounts.id</description>
+            <data-type>BIGINT</data-type>
+            <max-size>19</max-size>
+            <nullable>false</nullable>
+        </column>
+        <column name="tenant_id">
+            <description>FK to tenants.id</description>
+            <data-type>BIGINT</data-type>
+            <max-size>19</max-size>
+            <nullable>false</nullable>
+        </column>
+        <column name="is_default">
+            <description>1 if this is the default tenant for the account</description>
+            <data-type>BOOLEAN</data-type>
+            <max-size>1</max-size>
+            <nullable>false</nullable>
+        </column>
+    </columns>
+    <primary-key name="account_tenants_PK">
+      <primary-key-column>id</primary-key-column>
+    </primary-key>
+  </table>
+  <table name="account_roles">
+    <description>RBAC Roles per Account-Tenant pair</description>
+    <columns>
+        <column name="id">
+            <description>Unique Row Identifier</description>
+            <data-type>BIGINT</data-type>
+            <max-size>19</max-size>
+            <nullable>false</nullable>
+            <uniquevalue-generation>
+                <generator-name>account_roles.id</generator-name>
+            </uniquevalue-generation>
+        </column>
+        <column name="account_id">
+            <description>FK to auth_accounts.id</description>
+            <data-type>BIGINT</data-type>
+            <max-size>19</max-size>
+            <nullable>false</nullable>
+        </column>
+        <column name="tenant_id">
+            <description>FK to tenants.id</description>
+            <data-type>BIGINT</data-type>
+            <max-size>19</max-size>
+            <nullable>false</nullable>
+        </column>
+        <column name="role_name">
+            <description>Role name (e.g. Admin, CreateRequests)</description>
+            <data-type>CHAR</data-type>
+            <max-size>100</max-size>
+            <nullable>false</nullable>
+        </column>
+    </columns>
+    <primary-key name="account_roles_PK">
+      <primary-key-column>id</primary-key-column>
+    </primary-key>
+  </table>
+</data-dictionary>

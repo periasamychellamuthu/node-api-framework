@@ -1,25 +1,45 @@
-const EntityJSON = require('./EntityJSON');
-var Entity = require('./Entity');
-var entityJsons = EntityJSON.getEntityJSON();
-var metaDataHolderObj = null;
+const EntityConfigLoader = require('../Configuration/EntityConfigLoader');
+const Entity = require('./Entity');
 
-function metaDataHolder(){
+function metaDataHolder() {
+    var entityMeta = {};
 
-    var entityMeta ={};
+    this.addMetaDetails = function () {
+        const entities = EntityConfigLoader.getAllEntities();
+        entities.forEach(entityDef => {
+            let handlerModule = null;
+            if (entityDef.handler) {
+                try {
+                    let handlerPathFallback = `../../src/Handler/${entityDef.handler.charAt(0).toLowerCase() + entityDef.handler.slice(1)}`;
+                    handlerModule = require(handlerPathFallback);
+                } catch (e) { }
+            }
 
-    addMetaDetails = function(){
-        var keys = Object.keys(entityJsons);
-        keys.forEach(entity => {
-            entityMeta[entityJsons[entity].path] = new Entity(entityJsons[entity]);
+            let mappedJson = {
+                name: entityDef.entityName,
+                path: entityDef.path,
+                table_name: entityDef.tableName,
+                handlers: handlerModule,
+                fields: entityDef.fields ? entityDef.fields.map(f => ({
+                    name: f.name,
+                    is_identifier: f.identifier || false,
+                    relational_mapping: `${entityDef.tableName}.${f.name}`,
+                    nullable: f.nullable,
+                    unique: f.unique,
+                    constraints: f.constraints
+                })) : []
+            };
+            entityMeta[mappedJson.path] = new Entity(mappedJson);
         });
     }
-    addMetaDetails();
 
-    this.get=function(path){
-        if(path.indexOf('/') == -1){
-            path = '/'+path;
+    this.addMetaDetails();
+
+    this.get = function (path) {
+        if (path && path.indexOf('/') === -1) {
+            path = '/' + path;
         }
-       return entityMeta[path];
+        return entityMeta[path];
     }
 }
 

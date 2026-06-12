@@ -12,6 +12,20 @@ var fs = require('fs');
 var path = require('path');
 var app = express();
 
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, authorization, x-tenant-id');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(require('cookie-parser')());
+
 var certsDir = path.join(__dirname, '..', '..', '..', 'certs');
 var options = {
     key: fs.readFileSync(path.join(certsDir, 'key.pem')),

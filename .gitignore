@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment & IDE
+.venv/
+.vscode/
+.antigravity/
+.config/
+.agents/
+
+# Certificates
+certs/cert.pem
+certs/key.pem
+
+# Logs
+*.log
+debug.log
+error.log
+curl.log
+
+# Knowledge base
+knowledge-base/
+knowledge_base/
+
+# Test & scratch files
+test-api.js
+test-api-3001.js
+test-local.js
+test-routing.js
+test_scripts.js
+run_demo.js
+api_test_report.md
+agents.md
