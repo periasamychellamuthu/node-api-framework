@@ -40,7 +40,8 @@ function Entity(entityJSON) {
 
     this.getHandlerInstance = function () {
         if (!this.handlers) {
-            this.handlers = require('../defaultEntityHandler');
+            // No domain-specific handler found — use the framework default
+            this.handlers = require('../Handler/PreDefaultEntityHandler');
         }
         const handler = this.handlers;
         return new handler();

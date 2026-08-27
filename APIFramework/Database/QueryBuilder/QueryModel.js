@@ -147,6 +147,7 @@ class SelectQuery {
  *   }); // Uses implicit Criteria populated in APIRequest Context
  */
 
+// Contains all query DSL data model classes: Table, Column, Criteria, SelectQuery, Join, etc.
 module.exports = {
     Table,
     Column,

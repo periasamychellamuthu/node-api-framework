@@ -1,4 +1,4 @@
-const EntityConfigLoader = require('../Configuration/EntityConfigLoader');
+const EntityConfigLoader = require('../Registry/EntityConfigLoader');
 const Entity = require('./Entity');
 
 function metaDataHolder() {
@@ -10,7 +10,7 @@ function metaDataHolder() {
             let handlerModule = null;
             if (entityDef.handler) {
                 try {
-                    let handlerPathFallback = `../../src/Handler/${entityDef.handler.charAt(0).toLowerCase() + entityDef.handler.slice(1)}`;
+                    let handlerPathFallback = `../../src/handler/${entityDef.handler.charAt(0).toLowerCase() + entityDef.handler.slice(1)}`;
                     handlerModule = require(handlerPathFallback);
                 } catch (e) { }
             }

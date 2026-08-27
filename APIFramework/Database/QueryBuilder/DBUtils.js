@@ -1,4 +1,4 @@
-const { QueryConstants, Criteria, Column } = require('./QueryPrimitives');
+const { QueryConstants, Criteria, Column } = require('./QueryModel');
 
 class DBUtils {
     /**

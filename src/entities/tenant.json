@@ -3,7 +3,7 @@
   "pluralName": "tenants",
   "path": "/tenants",
   "tableName": "tenants",
-  "handler": "DefaultEntityHandler",
+  "handler": "PreDefaultEntityHandler",
   "validator": "DefaultEntityValidator",
   "listener": "DefaultEntityListener",
   "fields": [

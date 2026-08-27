@@ -3,7 +3,7 @@ const path = require('path');
 
 class EntityConfigLoader {
     constructor(configDir) {
-        this.configDir = configDir || path.join(process.cwd(), 'config', 'entities');
+        this.configDir = configDir || path.join(process.cwd(), 'src', 'entities');
         this.entities = new Map();
     }
 

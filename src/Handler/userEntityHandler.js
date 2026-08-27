@@ -1,14 +1,12 @@
-const ApiUtils = require("../../APIFramework/Utils/APIUtils");
+const PreDefaultEntityHandler = require('../../APIFramework/Handler/PreDefaultEntityHandler');
 
-const DefaultEntityHandler = ApiUtils.getDefaultEntityHandler();
-
-class UserEntityHandler extends DefaultEntityHandler {
+class UserEntityHandler extends PreDefaultEntityHandler {
     constructor() {
         super();
     }
 
     getEntityName() {
-        return this.entityName;
+        return 'user';
     }
 }
 

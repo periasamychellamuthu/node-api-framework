@@ -1,7 +1,7 @@
 
 const ApiUtils = {
     getDefaultEntityHandler : function(){
-        return require('../defaultEntityHandler')
+        return require('../Handler/DefaultEntityHandler')
     }
 }
 

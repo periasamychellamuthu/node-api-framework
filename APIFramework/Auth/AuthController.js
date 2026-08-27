@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const TokenService = require('./TokenService');
-const SQLConnect = require('../../src/database/MYSQL/connect');
+const SQLConnect = require('../Database/DBConnectionPool');
 const SequenceGenerator = require('../Database/SequenceGenerator');
 
 const SALT_ROUNDS = 10;
@@ -444,31 +444,18 @@ class AuthController {
 
     // --- DB Helpers ---
 
-    static _queryOne(sql, params) {
-        return new Promise((resolve, reject) => {
-            SQLConnect.pool.query(sql, params, (err, results) => {
-                if (err) return reject(err);
-                resolve(results && results.length > 0 ? results[0] : null);
-            });
-        });
+    static async _queryOne(sql, params) {
+        const results = await SQLConnect.query(sql, params);
+        return results && results.length > 0 ? results[0] : null;
     }
 
-    static _queryAll(sql, params) {
-        return new Promise((resolve, reject) => {
-            SQLConnect.pool.query(sql, params, (err, results) => {
-                if (err) return reject(err);
-                resolve(results || []);
-            });
-        });
+    static async _queryAll(sql, params) {
+        const results = await SQLConnect.query(sql, params);
+        return results || [];
     }
 
-    static _execute(sql, params) {
-        return new Promise((resolve, reject) => {
-            SQLConnect.pool.query(sql, params, (err, results) => {
-                if (err) return reject(err);
-                resolve(results);
-            });
-        });
+    static async _execute(sql, params) {
+        return SQLConnect.query(sql, params);
     }
 }
 

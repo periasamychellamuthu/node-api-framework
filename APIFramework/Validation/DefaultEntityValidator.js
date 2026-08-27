@@ -1,19 +1,19 @@
 /**
  * DefaultEntityValidator
- * 
+ *
  * Handles entity-level validation as defined in the Validator Reference:
- *   1. fillReferences    → Resolve reference field IDs
- *   2. fillDefaults      → Populate default values and placeholders
- *   3. checkReferenceIds → Validate foreign key integrity
- *   4. computeDiff       → For updates: compute changed fields
- *   5. validateConstraints → Field-level constraints (nullable, maxLength, regex from entity config)
- *   6. validate          → Custom business rule validation (override point)
- *   7. preProcess        → Data enrichment before save (override point)
- * 
+ *   1. fillRefs      → Resolve reference field IDs (stub — future)
+ *   2. fillDefaults  → Apply defaultValue from entity config + resolve $placeholders
+ *   3. checkRefIDs   → Validate foreign key integrity (stub — future)
+ *   4. basicValidation → Nullable, max-size, regex constraint checks
+ *   5. diff          → Compute changed fields for partial updates (stub — future)
+ *   6. validate      → Custom business rule override point
+ *   7. preProcess    → Data enrichment override point
+ *
  * NOTE: XML-based input validation (security templates, regex patterns, max-len)
- * is handled exclusively by the XMLSecurityMiddleware in the security layer.
- * This validator does NOT touch XML at all.
+ * is handled exclusively by XMLSecurityMiddleware. This validator does NOT touch XML.
  */
+const DBUtils = require('../Database/QueryBuilder/DBUtils');
 
 class DefaultEntityValidator {
     constructor() {
@@ -51,7 +51,7 @@ class DefaultEntityValidator {
 
         const fields = apiRequest.entity.getFields();
         const tableName = apiRequest.entity.getTableName();
-        const DataDictionaryParser = require('../Configuration/DataDictionaryParser');
+        const DataDictionaryParser = require('../Registry/DataDictionaryParser');
 
         // Ensure valid ID is present for mutating operations
         const op = apiRequest.operation;
@@ -105,8 +105,28 @@ class DefaultEntityValidator {
     }
 
     async fillDefaults(apiRequest) {
-        // Populate default values and placeholders ($now, $currentUser)
-        console.log("[ValidatorPipeline] fillDefaults executing...");
+        const entityName   = apiRequest.entity.getName();
+        const rawInputData = apiRequest.inputData.getEntityData() || {};
+        const entityData   = rawInputData[entityName] || rawInputData;
+        const fields       = apiRequest.entity.getFields();
+        const req          = apiRequest.context.request;
+
+        Object.keys(fields).forEach(key => {
+            const field = fields[key];
+
+            // 1. Apply defaultValue from entity config if field is absent from input
+            if (entityData[field.name] === undefined && field.defaultValue !== undefined) {
+                entityData[field.name] = field.defaultValue;
+                console.log(`[ValidatorPipeline] fillDefaults: applied default '${field.defaultValue}' to '${field.name}'`);
+            }
+
+            // 2. Resolve $placeholders — e.g. $now, $currentUser, $currentTenant
+            if (typeof entityData[field.name] === 'string' && entityData[field.name].startsWith('$')) {
+                const resolved = DBUtils.resolvePlaceholders(entityData[field.name], req);
+                console.log(`[ValidatorPipeline] fillDefaults: resolved '${entityData[field.name]}' → '${resolved}' for '${field.name}'`);
+                entityData[field.name] = resolved;
+            }
+        });
     }
 
     async checkRefIDs(apiRequest) {

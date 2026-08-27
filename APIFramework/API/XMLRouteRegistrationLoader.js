@@ -6,7 +6,7 @@ const router = require('../DefaultRouterHandler');
 class XMLRouteRegistrationLoader {
     async registerRoutes(app) {
         console.log(`[XMLRouteLoader] Parsing security-api.xml to dynamically mount native Express routes...`);
-        const xmlPath = path.join(__dirname, '..', '..', 'conf', 'security-api.xml');
+        const xmlPath = path.join(__dirname, '..', '..', 'security-config', 'security-api.xml');
         
         if (!fs.existsSync(xmlPath)) {
             console.error(`[XMLRouteLoader] CRITICAL ERROR: security-api.xml not found!`);

@@ -12,10 +12,10 @@ class XMLSecurityMiddleware {
     }
 
     async init() {
-        const confDir = path.join(process.cwd(), 'conf');
-        const apiPath = path.join(confDir, 'security-api.xml');
-        const templatePath = path.join(confDir, 'security-template-v1.xml');
-        const regexPath = path.join(confDir, 'security-regex-v1.xml');
+        const securityDir = path.join(process.cwd(), 'security-config');
+        const apiPath = path.join(securityDir, 'security-api.xml');
+        const templatePath = path.join(securityDir, 'security-template-v1.xml');
+        const regexPath = path.join(securityDir, 'security-regex-v1.xml');
 
         const parser = new xml2js.Parser();
 

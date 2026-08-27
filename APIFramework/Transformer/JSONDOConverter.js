@@ -1,4 +1,4 @@
-const EntityTransformer = require('../Transformer/EntityTransformer');
+const EntityTransformer = require('./EntityTransformer');
 
 /**
  * 2,019 lines in Java architecture reduced to its core capabilities.
@@ -13,22 +13,30 @@ class JSONDOConverter extends EntityTransformer {
      * Generically maps fields from their JSON name to their SQL Database column name.
      */
     async transformJSONToEntity(request) {
-        console.log(`[JSONDOConverter] Transforming JSON Request to DataObject for Entity: ${request.entity.getName()}`);
-        
-        let dbObject = {};
-        const inputData = request.inputData ? request.inputData.getEntityData() : {};
-        if (!inputData) return dbObject;
+        const entityName = request.entity.getName();
+        console.log(`[JSONDOConverter] Transforming JSON Request to DataObject for Entity: ${entityName}`);
 
-        console.log(`[JSONDOConverter] inputData ->`, inputData);
+        let dbObject = {};
+        const rawInputData = request.inputData ? request.inputData.getEntityData() : {};
+        if (!rawInputData) return dbObject;
+
+        // Input arrives as { "user": { "username": "...", "email": "..." } }
+        // Unwrap the entity-keyed wrapper to get the flat field map
+        const entityData = rawInputData[entityName] || rawInputData;
+
+        console.log(`[JSONDOConverter] entityData ->`, entityData);
 
         const fields = request.entity.getFields();
         for (const [key, fieldInfo] of Object.entries(fields)) {
-            if (inputData.hasOwnProperty(fieldInfo.name) && !fieldInfo.is_identifier) {
-                const columnName = fieldInfo.relationMapping.split('.')[1];
-                dbObject[columnName] = inputData[fieldInfo.name];
+            // Skip identifier fields — the PK is assigned by SequenceGenerator, not from input
+            if (fieldInfo.isIdentifier) continue;
+
+            if (entityData.hasOwnProperty(fieldInfo.name)) {
+                const columnName = fieldInfo.getColumnName();
+                dbObject[columnName] = entityData[fieldInfo.name];
             }
         }
-        
+
         console.log(`[JSONDOConverter] Created dbObject ->`, dbObject);
         return dbObject;
     }

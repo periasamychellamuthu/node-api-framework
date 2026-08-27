@@ -1,6 +1,6 @@
-const SQLConnect = require('../src/database/MYSQL/connect');
-const sqlQueryBuilder = require('../src/database/MYSQL/queryGeneratorAndExecutor');
-const Entity = require('./API/Entity');
+const SQLConnect = require('../Database/DBConnectionPool');
+const sqlQueryBuilder = require('../Database/QueryBuilder/DBUtils');
+const Entity = require('../API/Entity');
 
 function DefaultEntityHandler() {
     this.APIRequest = null;
@@ -199,9 +199,9 @@ DefaultEntityHandler.prototype.getList = function () {
         });
     });
 }
-const DefaultEntityValidator = require('./Validation/DefaultEntityValidator');
-const ListenerDispatcher = require('./Listener/ListenerDispatcher');
-const SequenceGenerator = require('./Database/SequenceGenerator');
+const DefaultEntityValidator = require('../Validation/DefaultEntityValidator');
+const ListenerDispatcher = require('../Listener/ListenerDispatcher');
+const SequenceGenerator = require('../Database/SequenceGenerator');
 
 DefaultEntityHandler.prototype.post = async function () {
     try {

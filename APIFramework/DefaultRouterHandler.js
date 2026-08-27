@@ -1,5 +1,5 @@
 var APIRequest = require('./API/APIRequest');
-const EntityConfigLoader = require('./Configuration/EntityConfigLoader');
+const EntityConfigLoader = require('./Registry/EntityConfigLoader');
 
 function DefaultRouterHandler() {
     this.handleRequest = async function (req, res) {
@@ -42,7 +42,8 @@ function DefaultRouterHandler() {
         }
 
         const apiRequest = new APIRequest(req, res);
-        apiRequest.operation = req._operation;
+        apiRequest.operation      = req._operation;
+        apiRequest._entityConfig  = req._entityConfig;  // forward raw config for ResponseTransformer / ListenerDispatcher
 
         if (!apiRequest.entity) {
             return res.status(400).send({
