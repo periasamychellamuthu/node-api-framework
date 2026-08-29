@@ -1,75 +1,150 @@
-const DataDictionaryParser = require('../Registry/DataDictionaryParser');
-const SQLConnect = require('./DBConnectionPool');
+'use strict';
 
+const DataDictionaryParser = require('../Registry/DataDictionaryParser');
+const SQLConnect           = require('./DBConnectionPool');
+const SequenceGenerator    = require('./SequenceGenerator');
+
+/**
+ * SchemaBuilder — Database schema lifecycle manager.
+ *
+ * All tables — framework IAM tables and product tables — are declared in
+ * data-dictionary XML files and driven through a single syncSchema() pass.
+ * No DDL is hardcoded here.
+ *
+ * Boot order (called from main.js):
+ *   1. syncSchema()          — CREATE TABLE IF NOT EXISTS for every table in DD XML
+ *   2. seedFrameworkData()   — INSERT IGNORE seed rows declared via <seed> in DD XML
+ *   3. warmSequenceGenerator() — load org ID ranges into memory
+ */
 class SchemaBuilder {
-    /**
-     * Iterates all parsed Table Definitions mapping Data Dictionary bounds securely into executable MySQL DD L phrases.
-     */
+
     static async syncSchema() {
-        console.log(`[SchemaBuilder] Commencing Database Schema Sync over configured tables...`);
+        console.log('[SchemaBuilder] Syncing schema from data dictionary...');
         const tables = DataDictionaryParser.TABLE_DEFINITIONS;
 
         if (!tables || tables.length === 0) {
-            console.log(`[SchemaBuilder] No tables found in DataDictionaryParser cache.`);
+            console.warn('[SchemaBuilder] No tables in DataDictionaryParser — ensure parseDataDictionaries() ran first.');
             return;
         }
 
-        // Pool is already initialised by DBConnectionPool.init() in main.js before this call.
-        // Ensure Platform Sequences table exists (not in DD — managed directly here)
-        await SQLConnect.query(`CREATE TABLE IF NOT EXISTS platform_sequences (
-            tenant_id VARCHAR(100) NOT NULL,
-            generator_name VARCHAR(150) NOT NULL,
-            current_value BIGINT NOT NULL,
-            range_min BIGINT NOT NULL,
-            range_max BIGINT NOT NULL,
-            PRIMARY KEY (tenant_id, generator_name)
-        )`);
-        console.log(`[SchemaBuilder] platform_sequences table ensured.`);
-
         for (const table of tables) {
             const tableName = table.$.name;
-            const columnsDef = table.columns && table.columns[0] && table.columns[0].column ? table.columns[0].column : [];
-            const pkDef = table['primary-key'] && table['primary-key'][0] && table['primary-key'][0]['primary-key-column']
-                ? table['primary-key'][0]['primary-key-column'][0]
-                : null;
 
-            let definitions = [];
+            // ── Columns ───────────────────────────────────────────────────────
+            const colNodes = table.columns?.[0]?.column ?? [];
+            const cols     = Array.isArray(colNodes) ? colNodes : [colNodes];
+            const pkNode   = table['primary-key']?.[0]?.['primary-key-column']?.[0] ?? null;
 
-            columnsDef.forEach(col => {
-                const name      = col.$.name;
-                const dataType  = col['data-type'] && col['data-type'][0] ? col['data-type'][0] : 'VARCHAR';
-                const maxSize   = col['max-size']  && col['max-size'][0]  ? col['max-size'][0]  : null;
-                const isNullable = col.nullable && col.nullable[0] === 'true';
-                const isUnique   = col.unique   && col.unique[0]   === 'true';
+            const definitions = [];
 
-                let sqlCol = `  ${name} `;
+            cols.forEach(col => {
+                const name    = col.$.name;
+                const rawType = col['data-type']?.[0] ?? 'VARCHAR';
+                const maxSize = col['max-size']?.[0]  ?? null;
+                const nullable      = col.nullable?.[0]          === 'true';
+                const unique        = col.unique?.[0]            === 'true';
+                const autoIncrement = col['auto-increment']?.[0] === 'true';
+                const defaultVal    = col.default?.[0]           ?? null;
 
-                if      (dataType === 'BIGINT')                   sqlCol += 'BIGINT';
-                else if (dataType === 'CHAR' || dataType === 'VARCHAR') sqlCol += `VARCHAR(${maxSize || 255})`;
-                else if (dataType === 'INTEGER' || dataType === 'INT')  sqlCol += 'INT';
-                else if (dataType === 'BOOLEAN')                  sqlCol += 'TINYINT(1)';
-                else if (dataType === 'SBLOB' || dataType === 'TEXT')   sqlCol += 'TEXT';
-                else                                              sqlCol += dataType;
+                let sqlType;
+                switch (rawType.toUpperCase()) {
+                    case 'BIGINT':                           sqlType = 'BIGINT';                              break;
+                    case 'VARCHAR': case 'CHAR':             sqlType = `VARCHAR(${maxSize || 255})`;          break;
+                    case 'INT': case 'INTEGER':              sqlType = 'INT';                                 break;
+                    case 'BOOLEAN':                          sqlType = 'TINYINT(1)';                          break;
+                    case 'TEXT': case 'SBLOB':               sqlType = 'TEXT';                                break;
+                    case 'DECIMAL':                          sqlType = `DECIMAL(${maxSize || '20,4'})`;       break;
+                    case 'DATETIME': case 'TIMESTAMP':       sqlType = 'DATETIME';                            break;
+                    case 'DATE':                             sqlType = 'DATE';                                break;
+                    case 'JSON':                             sqlType = 'JSON';                                break;
+                    default:                                 sqlType = rawType;
+                }
 
-                if (!isNullable) sqlCol += ' NOT NULL';
-                if (isUnique)    sqlCol += ' UNIQUE';
+                let colDef = `  ${name} ${sqlType}`;
+                if (autoIncrement) colDef += ' AUTO_INCREMENT';
+                if (!nullable)     colDef += ' NOT NULL';
+                if (unique)        colDef += ' UNIQUE';
+                if (defaultVal !== null) {
+                    const needsQuotes = ['VARCHAR', 'CHAR', 'TEXT'].includes(rawType.toUpperCase());
+                    colDef += needsQuotes ? ` DEFAULT '${defaultVal}'` : ` DEFAULT ${defaultVal}`;
+                }
 
-                definitions.push(sqlCol);
+                definitions.push(colDef);
             });
 
-            if (pkDef) definitions.push(`  PRIMARY KEY (${pkDef})`);
+            // ── Primary key ───────────────────────────────────────────────────
+            if (pkNode) definitions.push(`  PRIMARY KEY (${pkNode})`);
 
-            const sqlBuilder = `CREATE TABLE IF NOT EXISTS ${tableName} (\n${definitions.join(',\n')}\n);`;
+            // ── Foreign keys ──────────────────────────────────────────────────
+            const foreignKeys = DataDictionaryParser.getTableForeignKeys(tableName);
+            foreignKeys.forEach(fk => {
+                if (fk.name && fk.fkColumn && fk.refTable && fk.refColumn) {
+                    definitions.push(
+                        `  CONSTRAINT ${fk.name} FOREIGN KEY (${fk.fkColumn}) REFERENCES ${fk.refTable}(${fk.refColumn})`
+                    );
+                }
+            });
 
+            const ddl = `CREATE TABLE IF NOT EXISTS ${tableName} (\n${definitions.join(',\n')}\n)`;
             try {
-                await SQLConnect.query(sqlBuilder);
-                console.log(`[SchemaBuilder] Validated / Synchronized Table: ${tableName}`);
+                await SQLConnect.query(ddl);
+                const fkCount = foreignKeys.length;
+                console.log(`[SchemaBuilder] Ensured table: ${tableName}${fkCount ? ` (${fkCount} FK)` : ''}`);
             } catch (err) {
-                console.error(`[SchemaBuilder] Error synchronizing table ${tableName}:`, err.message);
+                console.error(`[SchemaBuilder] Error on table ${tableName}: ${err.message}`);
+                console.error(`[SchemaBuilder] DDL:\n${ddl}`);
+            }
+
+            // ── Secondary indexes ─────────────────────────────────────────────
+            // CREATE INDEX IF NOT EXISTS is MySQL 8.0.12+ only. For compatibility
+            // we omit IF NOT EXISTS and swallow the "Duplicate key name" error that
+            // MySQL throws when the index already exists.
+            const indexes = DataDictionaryParser.getTableIndexes(tableName);
+            for (const idx of indexes) {
+                const uniqueKw = idx.unique ? 'UNIQUE ' : '';
+                const idxDdl   = `CREATE ${uniqueKw}INDEX ${idx.name} ON ${tableName} (${idx.columns.join(', ')})`;
+                try {
+                    await SQLConnect.query(idxDdl);
+                } catch (err) {
+                    // ER_DUP_KEYNAME (1061) — index already exists, safe to ignore
+                    if (err.code !== 'ER_DUP_KEYNAME' && !err.message.includes('Duplicate key name')) {
+                        console.error(`[SchemaBuilder] Index error on ${tableName}.${idx.name}: ${err.message}`);
+                    }
+                }
             }
         }
 
-        console.log(`[SchemaBuilder] Schema Sync Completed.`);
+        console.log('[SchemaBuilder] Schema sync complete.');
+    }
+
+    static async seedFrameworkData() {
+        const tables = DataDictionaryParser.TABLE_DEFINITIONS;
+        for (const table of tables) {
+            const tableName = table.$.name;
+            const seedRows  = DataDictionaryParser.getTableSeedRows(tableName);
+            if (seedRows.length === 0) continue;
+
+            // Derive PK column(s) from the table definition
+            const pkNode = table['primary-key']?.[0]?.['primary-key-column']?.[0] ?? null;
+            const pkCols = pkNode ? pkNode.split(',').map(s => s.trim()) : [];
+
+            for (const row of seedRows) {
+                const cols = Object.keys(row);
+                const vals = Object.values(row);
+                const placeholders = cols.map(() => '?').join(', ');
+                const sql  = `INSERT IGNORE INTO ${tableName} (${cols.join(', ')}) VALUES (${placeholders})`;
+                try {
+                    await SQLConnect.query(sql, vals);
+                } catch (err) {
+                    console.error(`[SchemaBuilder] Seed error on ${tableName}: ${err.message}`);
+                }
+            }
+            console.log(`[SchemaBuilder] Seeded ${seedRows.length} row(s) into ${tableName}.`);
+        }
+    }
+
+    static async warmSequenceGenerator() {
+        await SequenceGenerator.loadAllRanges();
     }
 }
 

@@ -1,0 +1,70 @@
+{
+  "entityName": "role",
+  "pluralName": "roles",
+  "path": "/roles",
+  "tableName": "roles",
+  "handler": "DefaultEntityHandler",
+  "validator": "DefaultEntityValidator",
+  "listeners": [],
+  "fields": [
+    {
+      "name": "role_id",
+      "relational_mapping": "roles.role_id",
+      "is_identifier": true,
+      "nullable": false
+    },
+    {
+      "name": "name",
+      "relational_mapping": "roles.name",
+      "nullable": false
+    },
+    {
+      "name": "is_system_role",
+      "relational_mapping": "roles.is_system_role",
+      "nullable": false,
+      "internal": false
+    },
+    {
+      "name": "description",
+      "relational_mapping": "roles.description",
+      "nullable": true
+    }
+  ],
+  "operations": [
+    {
+      "name": "get_list",
+      "method": "get",
+      "without_id": true,
+      "roles": ["OrgAdmin"],
+      "description": "List all roles in the org (range-scoped automatically)"
+    },
+    {
+      "name": "get",
+      "method": "get",
+      "without_id": false,
+      "roles": ["OrgAdmin"],
+      "description": "Get a specific role by role_id"
+    },
+    {
+      "name": "add",
+      "method": "post",
+      "without_id": true,
+      "roles": ["OrgAdmin"],
+      "description": "Create a custom role in this org"
+    },
+    {
+      "name": "edit",
+      "method": "put",
+      "without_id": false,
+      "roles": ["OrgAdmin"],
+      "description": "Update role name/description (system roles protected at handler level)"
+    },
+    {
+      "name": "delete",
+      "method": "delete",
+      "without_id": false,
+      "roles": ["OrgAdmin"],
+      "description": "Delete a custom role (system roles cannot be deleted)"
+    }
+  ]
+}

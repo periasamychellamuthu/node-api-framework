@@ -1,0 +1,79 @@
+{
+  "entityName": "custom_module",
+  "pluralName": "modules",
+  "path": "/modules",
+  "tableName": "custom_modules",
+  "handler": "DefaultEntityHandler",
+  "validator": "DefaultEntityValidator",
+  "listeners": [],
+  "fields": [
+    {
+      "name": "module_id",
+      "relational_mapping": "custom_modules.module_id",
+      "is_identifier": true,
+      "nullable": false
+    },
+    {
+      "name": "name",
+      "relational_mapping": "custom_modules.name",
+      "nullable": false
+    },
+    {
+      "name": "module_handle",
+      "relational_mapping": "custom_modules.module_handle",
+      "nullable": false
+    },
+    {
+      "name": "description",
+      "relational_mapping": "custom_modules.description",
+      "nullable": true
+    },
+    {
+      "name": "status",
+      "relational_mapping": "custom_modules.status",
+      "nullable": false
+    },
+    {
+      "name": "created_by",
+      "relational_mapping": "custom_modules.created_by",
+      "nullable": false,
+      "internal": false
+    },
+    {
+      "name": "created_at",
+      "relational_mapping": "custom_modules.created_at",
+      "nullable": false,
+      "internal": false
+    }
+  ],
+  "operations": [
+    {
+      "name": "get_list",
+      "method": "get",
+      "without_id": true,
+      "roles": ["OrgAdmin", "ModuleConfig", "Member"],
+      "description": "List all custom modules in the org"
+    },
+    {
+      "name": "get",
+      "method": "get",
+      "without_id": false,
+      "roles": ["OrgAdmin", "ModuleConfig", "Member"],
+      "description": "Get a specific module definition by module_handle"
+    },
+    {
+      "name": "add",
+      "method": "post",
+      "without_id": true,
+      "roles": ["OrgAdmin", "ModuleConfig"],
+      "description": "Create a new custom module (also seeds permissions + security XML entries)"
+    },
+    {
+      "name": "edit",
+      "method": "put",
+      "without_id": false,
+      "roles": ["OrgAdmin", "ModuleConfig"],
+      "description": "Update module name, description, or status"
+    }
+  ]
+}

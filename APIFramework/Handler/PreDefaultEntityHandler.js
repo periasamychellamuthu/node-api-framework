@@ -1,57 +1,75 @@
+'use strict';
+
 const AbstractEntityHandler  = require('./AbstractEntityHandler');
 const DefaultEntityValidator = require('../Validation/DefaultEntityValidator');
-const DBUtils                = require('../Database/QueryBuilder/DBUtils');
-const { SelectQuery, Criteria, Column, QueryConstants } = require('../Database/QueryBuilder/QueryModel');
-const SQLConnect             = require('../Database/DBConnectionPool');
+const dataAccess             = require('../Database/ORM/DataAccess');
 const SequenceGenerator      = require('../Database/SequenceGenerator');
 const JSONDOConverter        = require('../Transformer/JSONDOConverter');
 const ResponseTransformer    = require('../Transformer/ResponseTransformer');
 const ListenerDispatcher     = require('../Listener/ListenerDispatcher');
+const { SelectQueryImpl, Criteria, Column, Table, Range, SortColumn } = require('../Database/QueryBuilder');
 
-/**
- * PreDefaultEntityHandler
- *
- * The core framework CRUD layer. Every domain handler (e.g. UserEntityHandler)
- * extends this class. Override any method for entity-specific behaviour;
- * call super.<method>(request) to retain the default pipeline.
- *
- * Pipeline per operation:
- *   add    : validate → beforeCreate listener → INSERT → fetch → afterCreate listener → respond
- *   edit   : validate → beforeUpdate listener → UPDATE → fetch → afterUpdate listener → respond
- *   getList: SELECT all rows (tenant-scoped when tenant_id column exists) → transform → respond
- *   getEntity: SELECT by id → transform → respond
- *   delete : validate id present → beforeDelete listener → DELETE → afterDelete listener → respond
- */
 class PreDefaultEntityHandler extends AbstractEntityHandler {
-    constructor() {
-        super();
+    constructor() { super(); }
+
+    _pkColumn(entity) {
+        const idField = entity.getIdentifierField();
+        return idField ? idField.getColumnName() : 'id';
     }
 
-    // ─── READ ────────────────────────────────────────────────────────────────
+    /**
+     * Derives explicit SELECT columns from the entity's field definitions.
+     * Only fields that map to a real DB column in the entity's primary table
+     * are included (collection fields are skipped).
+     * Returns an array of Column instances to be added to a SelectQueryImpl.
+     */
+    _buildSelectColumns(entity) {
+        const tableName = entity.getTableName();
+        const columns   = [];
+        for (const field of Object.values(entity.getFields())) {
+            if (field.isCollection) continue;                     // no DB column
+            if (!field.relationMapping) continue;                 // guard
+            const fieldTable  = field.getTableName();
+            const fieldColumn = field.getColumnName();
+            // Only select columns that belong to this entity's primary table.
+            // Joined-table fields (FK expansion) are resolved separately.
+            if (fieldTable === tableName) {
+                columns.push(Column.getColumn(tableName, fieldColumn));
+            }
+        }
+        return columns;
+    }
 
     async getList(request) {
-        const entityConfig = request._entityConfig;
-        const tableName    = request.entity.getTableName();
+        const entity    = request.entity;
+        const tableName = entity.getTableName();
+        const req       = request.context.request;
+        const pkColumn  = this._pkColumn(entity);
 
-        const selectQuery = new SelectQuery(tableName);
-        // tenant scoping will be applied here once tenant_id column is present on all tables
+        const sq = new SelectQueryImpl(Table.getTable(tableName));
+        sq.addSelectColumns(this._buildSelectColumns(entity));
+        if (req.rangeStart && req.rangeEnd) {
+            sq.setCriteria(
+                Criteria.between(Column.getColumn(tableName, pkColumn), req.rangeStart, req.rangeEnd)
+            );
+        }
 
-        const { sql, params } = DBUtils.getSelectQueryAsSQL(selectQuery);
-        console.log(`[PreDefaultEntityHandler] getList SQL: ${sql}`, params);
+        const rows     = await dataAccess.get(sq);
+        const jsonRows = await Promise.all(
+            rows.map(row => JSONDOConverter.transformEntityToJSON(row.toObject(), entity))
+        );
 
-        const rows = await SQLConnect.query(sql, params);
-
-        // Transform each DB row → JSON shape using entity field relational_mapping
-        const jsonRows = await Promise.all(rows.map(row => JSONDOConverter.transformEntityToJSON(row, request.entity)));
-
-        const response = ResponseTransformer.transform(entityConfig, 'getList', jsonRows);
-        return request.response.status(200).json(response);
+        return request.response.status(200).json(
+            ResponseTransformer.transform(entity, 'getList', jsonRows)
+        );
     }
 
     async getEntity(request) {
-        const entityConfig = request._entityConfig;
-        const tableName    = request.entity.getTableName();
-        const entityId     = request.entityId;
+        const entity    = request.entity;
+        const tableName = entity.getTableName();
+        const entityId  = request.entityId;
+        const req       = request.context.request;
+        const pkColumn  = this._pkColumn(entity);
 
         if (!entityId) {
             return request.response.status(400).json({
@@ -59,143 +77,133 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
             });
         }
 
-        const idField = request.entity.getIdentifierField();
-        const idColumn = idField ? idField.getColumnName() : 'id';
+        const sq = new SelectQueryImpl(Table.getTable(tableName));
+        sq.addSelectColumns(this._buildSelectColumns(entity));
+        let criteria = Criteria.eq(Column.getColumn(tableName, pkColumn), entityId);
+        if (req.rangeStart && req.rangeEnd) {
+            criteria = criteria.and(
+                Criteria.between(Column.getColumn(tableName, pkColumn), req.rangeStart, req.rangeEnd)
+            );
+        }
+        sq.setCriteria(criteria);
 
-        const selectQuery = new SelectQuery(tableName);
-        const idCriteria  = new Criteria(
-            Column.getColumn(tableName, idColumn),
-            entityId,
-            QueryConstants.EQUAL
-        );
-        selectQuery.setCriteria(idCriteria);
+        const row = await dataAccess.getOne(sq);
 
-        const { sql, params } = DBUtils.getSelectQueryAsSQL(selectQuery);
-        console.log(`[PreDefaultEntityHandler] getEntity SQL: ${sql}`, params);
-
-        const rows = await SQLConnect.query(sql, params);
-
-        if (!rows || rows.length === 0) {
+        if (!row) {
             return request.response.status(404).json({
-                response_status: { status: 'failed', message: `${entityConfig.entityName} not found` }
+                response_status: { status: 'failed', message: `${entity.getName()} not found` }
             });
         }
 
-        const jsonRow  = await JSONDOConverter.transformEntityToJSON(rows[0], request.entity);
-        const response = ResponseTransformer.transform(entityConfig, 'getEntity', jsonRow);
-        return request.response.status(200).json(response);
+        const jsonRow = await JSONDOConverter.transformEntityToJSON(row.toObject(), entity);
+        return request.response.status(200).json(
+            ResponseTransformer.transform(entity, 'getEntity', jsonRow)
+        );
     }
 
-    // ─── WRITE ───────────────────────────────────────────────────────────────
-
     async add(request) {
-        const entityConfig = request._entityConfig;
-        const tableName    = request.entity.getTableName();
+        const entity    = request.entity;
+        const tableName = entity.getTableName();
+        const req       = request.context.request;
+        const pkColumn  = this._pkColumn(entity);
 
-        // 1. Validate
         await DefaultEntityValidator.validatePipeline(request);
+        await ListenerDispatcher.dispatch('beforeCreate', entity, request.inputData, req);
 
-        // 2. Before-create listener
-        await ListenerDispatcher.dispatch('beforeCreate', entityConfig, request.inputData, request.context.request);
+        const plainObj = await JSONDOConverter.transformJSONToEntity(request);
 
-        // 3. Build insert data: JSON field names → DB column names
-        const dbObject = await JSONDOConverter.transformJSONToEntity(request);
-
-        // 4. Generate tenant-partitioned PK
-        // tenantId must be a real numeric ID — entity operations require an active tenant session.
-        const tenantId = request.context.request.$credentials && request.context.request.$credentials.tenantId
-            ? String(request.context.request.$credentials.tenantId)
-            : null;
-
-        if (!tenantId) {
+        const orgId = req.orgId;
+        if (!orgId) {
             return request.response.status(403).json({
-                response_status: {
-                    status: 'failed',
-                    message: 'No active tenant. Create or link a tenant before performing entity operations.'
-                }
+                response_status: { status: 'failed', message: 'No active org context. This endpoint requires an org-scoped URL.' }
             });
         }
 
-        const insertId = await SequenceGenerator.getNextId(tenantId, `${tableName}.id`);
-        dbObject['id']  = insertId;
+        const insertId     = await SequenceGenerator.getNextId(orgId);
+        plainObj[pkColumn] = insertId;
 
-        // 5. INSERT
-        const columns      = Object.keys(dbObject);
-        const placeholders = columns.map(() => '?').join(', ');
-        const values       = columns.map(c => dbObject[c]);
-        const insertSQL    = `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
-        console.log(`[PreDefaultEntityHandler] add SQL: ${insertSQL}`, values);
+        const dobj = dataAccess.constructDataObject();
+        const row  = dataAccess.newRow(tableName);
+        for (const [k, v] of Object.entries(plainObj)) row.set(k, v);
+        dobj.addRow(row);
+        await dataAccess.add(dobj);
 
-        await SQLConnect.query(insertSQL, values);
-
-        // 6. Fetch the created record to return it
-        const idField  = request.entity.getIdentifierField();
-        const idColumn = idField ? idField.getColumnName() : 'id';
-        const rows     = await SQLConnect.query(
-            `SELECT * FROM ${tableName} WHERE ${idColumn} = ?`, [insertId]
+        const fetchSq = new SelectQueryImpl(Table.getTable(tableName));
+        fetchSq.addSelectColumns(this._buildSelectColumns(entity));
+        fetchSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), insertId));
+        const created = await dataAccess.getOne(fetchSq);
+        const jsonRow = await JSONDOConverter.transformEntityToJSON(
+            created ? created.toObject() : plainObj, entity
         );
-        const jsonRow  = rows.length > 0 ? await JSONDOConverter.transformEntityToJSON(rows[0], request.entity) : dbObject;
 
-        // 7. After-create listener
-        await ListenerDispatcher.dispatch('afterCreate', entityConfig, jsonRow, request.context.request);
+        await ListenerDispatcher.dispatch('afterCreate', entity, jsonRow, req);
 
-        const response = ResponseTransformer.transform(entityConfig, 'add', jsonRow);
-        return request.response.status(200).json(response);
+        return request.response.status(200).json(
+            ResponseTransformer.transform(entity, 'add', jsonRow)
+        );
     }
 
     async edit(request) {
-        const entityConfig = request._entityConfig;
-        const tableName    = request.entity.getTableName();
-        const entityId     = request.entityId;
+        const entity    = request.entity;
+        const tableName = entity.getTableName();
+        const entityId  = request.entityId;
+        const req       = request.context.request;
+        const pkColumn  = this._pkColumn(entity);
 
-        // 1. Validate (also checks entityId present for PUT)
         await DefaultEntityValidator.validatePipeline(request);
+        await ListenerDispatcher.dispatch('beforeUpdate', entity, request.inputData, req);
 
-        // 2. Before-update listener
-        await ListenerDispatcher.dispatch('beforeUpdate', entityConfig, request.inputData, request.context.request);
-
-        // 3. Build update data: JSON field names → DB column names (skip identifier)
-        const dbObject = await JSONDOConverter.transformJSONToEntity(request);
-
-        if (Object.keys(dbObject).length === 0) {
+        const plainChanges = await JSONDOConverter.transformJSONToEntity(request);
+        if (Object.keys(plainChanges).length === 0) {
             return request.response.status(400).json({
                 response_status: { status: 'failed', message: 'No updatable fields provided' }
             });
         }
 
-        // 4. UPDATE
-        const idField  = request.entity.getIdentifierField();
-        const idColumn = idField ? idField.getColumnName() : 'id';
-        const setClause = Object.keys(dbObject).map(c => `${c} = ?`).join(', ');
-        const values    = [...Object.values(dbObject), entityId];
-        const updateSQL = `UPDATE ${tableName} SET ${setClause} WHERE ${idColumn} = ?`;
-        console.log(`[PreDefaultEntityHandler] edit SQL: ${updateSQL}`, values);
+        const fetchSq = new SelectQueryImpl(Table.getTable(tableName));
+        fetchSq.addSelectColumns(this._buildSelectColumns(entity));
+        fetchSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));
+        const existing = await dataAccess.getOne(fetchSq);
 
-        const result = await SQLConnect.query(updateSQL, values);
-
-        if (result.affectedRows === 0) {
+        if (!existing) {
             return request.response.status(404).json({
-                response_status: { status: 'failed', message: `${entityConfig.entityName} not found or nothing changed` }
+                response_status: { status: 'failed', message: `${entity.getName()} not found` }
             });
         }
 
-        // 5. Fetch the updated record to return it
-        const rows    = await SQLConnect.query(
-            `SELECT * FROM ${tableName} WHERE ${idColumn} = ?`, [entityId]
+        for (const [k, v] of Object.entries(plainChanges)) existing.set(k, v);
+
+        if (!existing.isDirty()) {
+            return request.response.status(200).json(
+                ResponseTransformer.transform(entity, 'edit', await JSONDOConverter.transformEntityToJSON(existing.toObject(), entity))
+            );
+        }
+
+        const dobj = dataAccess.constructDataObject();
+        dobj.updateRow(existing);
+        await dataAccess.update(dobj);
+
+        const updatedSq = new SelectQueryImpl(Table.getTable(tableName));
+        updatedSq.addSelectColumns(this._buildSelectColumns(entity));
+        updatedSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));
+        const updated = await dataAccess.getOne(updatedSq);
+        const jsonRow = await JSONDOConverter.transformEntityToJSON(
+            updated ? updated.toObject() : existing.toObject(), entity
         );
-        const jsonRow = rows.length > 0 ? await JSONDOConverter.transformEntityToJSON(rows[0], request.entity) : {};
 
-        // 6. After-update listener
-        await ListenerDispatcher.dispatch('afterUpdate', entityConfig, jsonRow, request.context.request);
+        await ListenerDispatcher.dispatch('afterUpdate', entity, jsonRow, req);
 
-        const response = ResponseTransformer.transform(entityConfig, 'edit', jsonRow);
-        return request.response.status(200).json(response);
+        return request.response.status(200).json(
+            ResponseTransformer.transform(entity, 'edit', jsonRow)
+        );
     }
 
     async delete(request) {
-        const entityConfig = request._entityConfig;
-        const tableName    = request.entity.getTableName();
-        const entityId     = request.entityId;
+        const entity    = request.entity;
+        const tableName = entity.getTableName();
+        const entityId  = request.entityId;
+        const req       = request.context.request;
+        const pkColumn  = this._pkColumn(entity);
 
         if (!entityId) {
             return request.response.status(400).json({
@@ -203,32 +211,29 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
             });
         }
 
-        // 1. Before-delete listener
-        await ListenerDispatcher.dispatch('beforeDelete', entityConfig, { id: entityId }, request.context.request);
+        await ListenerDispatcher.dispatch('beforeDelete', entity, { id: entityId }, req);
 
-        // 2. DELETE
-        const idField  = request.entity.getIdentifierField();
-        const idColumn = idField ? idField.getColumnName() : 'id';
-        const deleteSQL = `DELETE FROM ${tableName} WHERE ${idColumn} = ?`;
-        console.log(`[PreDefaultEntityHandler] delete SQL: ${deleteSQL}`, [entityId]);
+        const fetchSq = new SelectQueryImpl(Table.getTable(tableName));
+        fetchSq.addSelectColumns(this._buildSelectColumns(entity));
+        fetchSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));
+        const existing = await dataAccess.getOne(fetchSq);
 
-        const result = await SQLConnect.query(deleteSQL, [entityId]);
-
-        if (result.affectedRows === 0) {
+        if (!existing) {
             return request.response.status(404).json({
-                response_status: { status: 'failed', message: `${entityConfig.entityName} not found` }
+                response_status: { status: 'failed', message: `${entity.getName()} not found` }
             });
         }
 
-        // 3. After-delete listener
-        await ListenerDispatcher.dispatch('afterDelete', entityConfig, { id: entityId }, request.context.request);
+        const dobj = dataAccess.constructDataObject();
+        dobj.deleteRow(existing);
+        await dataAccess.delete(dobj);
+
+        await ListenerDispatcher.dispatch('afterDelete', entity, { id: entityId }, req);
 
         return request.response.status(200).json({
-            response_status: { status: 'success', message: `${entityConfig.entityName} deleted successfully` }
+            response_status: { status: 'success', message: `${entity.getName()} deleted successfully` }
         });
     }
-
-    // ─── CUSTOM OPERATIONS (override in domain handler) ──────────────────────
 
     async handleOperation(request) {
         throw new Error(`handleOperation not implemented for ${request.entity.getName()}. Override in your domain handler.`);

@@ -1,0 +1,179 @@
+/**
+ * SchemaRegistry — central column and FK metadata registry for the ORM layer.
+ *
+ * Design (row-oriented-orm-wrapper-over-knex.md §4):
+ *   "Every table the wrapper manages is declared once, in a central registry.
+ *    The registry stores the table name, its columns, and per-column constraints
+ *    (type, nullability, primary key). Declaring schema up front lets the wrapper
+ *    validate rows before sending them to the database."
+ *
+ * Versatile adaptation:
+ *   We do NOT re-declare tables manually in JS code. Instead, SchemaRegistry
+ *   populates itself from DataDictionaryParser at startup — the XML data dictionary
+ *   is the single source of truth for all column metadata and FK definitions.
+ *
+ *   This is the glue between the DD layer (XML → DataDictionaryParser) and the
+ *   ORM layer (DataModel → SchemaRegistry).
+ *
+ * API:
+ *   schemaRegistry.get(tableName)                  → column definition map
+ *   schemaRegistry.validateRow(tableName, row)      → throws on missing required fields
+ *   schemaRegistry.getForeignKeys(tableName)        → FK array [{ name, fkColumn, refTable, refColumn }]
+ *   schemaRegistry.getPrimaryKey(tableName)         → PK column name string or null
+ */
+
+const DataDictionaryParser = require('../../../APIFramework/Registry/DataDictionaryParser');
+
+class SchemaRegistry {
+    constructor() {
+        // Map<tableName, columnDefinitionMap>
+        // columnDefinitionMap: { [colName]: { type, required, primaryKey } }
+        this._tables = new Map();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Bootstrap — called once after DataDictionaryParser has finished parsing.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Populate the registry from the already-parsed DataDictionaryParser state.
+     * Must be called after DataDictionaryParser.parseDataDictionaries() completes.
+     *
+     * For each table in TABLE_DEFINITIONS it builds a column definition map
+     * identical in shape to the manual `define()` API in the reference doc:
+     *   { colName: { type, required, primaryKey } }
+     */
+    loadFromDataDictionary() {
+        const tables = DataDictionaryParser.TABLE_DEFINITIONS;
+        if (!tables || tables.length === 0) {
+            console.warn('[SchemaRegistry] DataDictionaryParser has no tables — call loadFromDataDictionary() after parsing.');
+            return;
+        }
+
+        for (const table of tables) {
+            const tableName = table.$.name;
+            const colDefs   = {};
+
+            // Determine primary key column(s) from <primary-key>
+            let pkColumns = [];
+            if (table['primary-key'] && table['primary-key'][0] && table['primary-key'][0]['primary-key-column']) {
+                const raw = table['primary-key'][0]['primary-key-column'][0];
+                // Could be composite: "member_id, role_id"
+                pkColumns = raw.split(',').map(s => s.trim());
+            }
+
+            // Build column definition map from <columns>
+            const columns = table.columns && table.columns[0] && table.columns[0].column
+                ? (Array.isArray(table.columns[0].column) ? table.columns[0].column : [table.columns[0].column])
+                : [];
+
+            columns.forEach(col => {
+                const name       = col.$.name;
+                const dataType   = col['data-type']  && col['data-type'][0]  ? col['data-type'][0]  : 'VARCHAR';
+                const isNullable = col.nullable && col.nullable[0] === 'true';
+                const isPK       = pkColumns.includes(name);
+
+                colDefs[name] = {
+                    type:       dataType,
+                    required:   !isNullable && !isPK, // PKs are assigned by SequenceGenerator, not user input
+                    primaryKey: isPK
+                };
+            });
+
+            this._tables.set(tableName, colDefs);
+        }
+
+        console.log(`[SchemaRegistry] Loaded ${this._tables.size} table(s) from DataDictionaryParser.`);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Manual registration (for framework-owned tables not in the DD XML)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Manually define a table's column schema.
+     * Useful for framework IAM tables (iam_auth_accounts, organizations, etc.)
+     * that are created by SchemaBuilder but not in data-dictionary.xml.
+     *
+     * @param {string} name       — table name
+     * @param {object} definition — { colName: { type, required, primaryKey } }
+     */
+    define(name, definition) {
+        this._tables.set(name, definition);
+        return this;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Public API
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Returns the column definition map for a registered table.
+     * Throws if the table has not been registered.
+     *
+     * @param {string} name
+     * @returns {{ [colName]: { type, required, primaryKey } }}
+     */
+    get(name) {
+        const definition = this._tables.get(name);
+        if (!definition) {
+            throw new Error(`[SchemaRegistry] Table "${name}" is not registered. ` +
+                `Ensure DataDictionaryParser.parseDataDictionaries() has run before calling loadFromDataDictionary().`);
+        }
+        return definition;
+    }
+
+    /**
+     * Validates that all required columns in a row are present and non-null.
+     * PK columns are excluded from required-check (assigned by SequenceGenerator).
+     *
+     * Throws Error with a descriptive message on the first missing required field.
+     *
+     * @param {string} tableName
+     * @param {object} row  — plain JS object: { colName: value, ... }
+     */
+    validateRow(tableName, row) {
+        const definition = this.get(tableName);
+        for (const [column, rules] of Object.entries(definition)) {
+            if (rules.required && (row[column] === undefined || row[column] === null)) {
+                throw new Error(`[SchemaRegistry] Column "${column}" is required for table "${tableName}" but was not provided.`);
+            }
+        }
+    }
+
+    /**
+     * Returns FK definitions for a table as registered in DataDictionaryParser.FK_MAP.
+     *
+     * @param {string} tableName
+     * @returns {Array<{ name, fkColumn, refTable, refColumn }>}
+     */
+    getForeignKeys(tableName) {
+        return DataDictionaryParser.getTableForeignKeys(tableName);
+    }
+
+    /**
+     * Returns the primary key column name for a table.
+     * For composite PKs returns the first column (sufficient for org-range lookup).
+     *
+     * @param {string} tableName
+     * @returns {string|null}
+     */
+    getPrimaryKey(tableName) {
+        const definition = this._tables.get(tableName);
+        if (!definition) return null;
+        const pkEntry = Object.entries(definition).find(([, rules]) => rules.primaryKey);
+        return pkEntry ? pkEntry[0] : null;
+    }
+
+    /**
+     * Returns true if the table has been registered.
+     * @param {string} tableName
+     * @returns {boolean}
+     */
+    has(tableName) {
+        return this._tables.has(tableName);
+    }
+}
+
+// Singleton — shared across the entire framework.
+module.exports = new SchemaRegistry();

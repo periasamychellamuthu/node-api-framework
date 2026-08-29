@@ -2,6 +2,8 @@
 node_modules/
 package-lock.json
 versatile_KB/
+versatile_core/
+ImplementationDoc/
 
 # Environment & IDE
 .venv/
@@ -9,6 +11,18 @@ versatile_KB/
 .antigravity/
 .config/
 .agents/
+.idea/
+.opencode/
+opencode.json
+
+# Local config (contains DB credentials — never commit)
+product-config.json
+
+# Resume & personal files
+resume.md
+*.jpeg
+*.jpg
+*.png
 
 # Certificates
 certs/cert.pem

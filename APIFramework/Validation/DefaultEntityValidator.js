@@ -61,12 +61,14 @@ class DefaultEntityValidator {
             }
         }
 
+        const isPut = op === 'PUT';
+
         Object.keys(fields).forEach(key => {
             const field = fields[key];
             const value = inputData[field.name];
 
-            // Nullable check — identifier fields are auto-generated
-            if (field.nullable === false && !field.isIdentifier) {
+            // Nullable check — identifier fields are auto-generated; PUT skips absent fields (partial update)
+            if (field.nullable === false && !field.isIdentifier && !isPut) {
                 if (value === undefined || value === null || value === '') {
                     throw new Error(`Mandatory field missing: ${field.name}`);
                 }

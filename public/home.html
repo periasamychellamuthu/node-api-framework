@@ -33,24 +33,36 @@
             transition: background 0.2s;
         }
         .topbar .btn-logout:hover { background: rgba(239,68,68,0.25); }
+
         .container { max-width: 900px; margin: 0 auto; padding: 48px 32px; }
+
+        /* Welcome card */
         .welcome-card {
             background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
             border-radius: 16px; padding: 32px; margin-bottom: 32px;
         }
         .welcome-card h2 { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
-        .welcome-card p { font-size: 14px; color: #9ca3af; }
-        .tenant-badge {
-            display: inline-block; margin-top: 12px; padding: 6px 14px;
+        .welcome-card p  { font-size: 14px; color: #9ca3af; }
+        .org-badge {
+            display: inline-flex; align-items: center; gap: 8px; margin-top: 14px;
+            padding: 6px 14px;
             background: rgba(129,140,248,0.12); border: 1px solid rgba(129,140,248,0.25);
             border-radius: 20px; font-size: 13px; color: #a78bfa; font-weight: 500;
         }
-        .no-tenant-card {
+        .org-badge .handle { opacity: 0.7; font-size: 12px; }
+        .role-badge {
+            display: inline-block; margin-left: 8px; padding: 2px 10px;
+            background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.25);
+            border-radius: 20px; font-size: 12px; color: #34d399;
+        }
+
+        /* No org card */
+        .no-org-card {
             background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.2);
             border-radius: 16px; padding: 32px; text-align: center;
         }
-        .no-tenant-card h3 { font-size: 18px; color: #fbbf24; margin-bottom: 8px; }
-        .no-tenant-card p { font-size: 14px; color: #9ca3af; margin-bottom: 20px; }
+        .no-org-card h3 { font-size: 18px; color: #fbbf24; margin-bottom: 8px; }
+        .no-org-card p  { font-size: 14px; color: #9ca3af; margin-bottom: 20px; }
         .btn-create {
             display: inline-block; padding: 12px 28px;
             background: linear-gradient(135deg, #fbbf24, #f59e0b);
@@ -59,6 +71,12 @@
             transition: transform 0.15s, box-shadow 0.2s;
         }
         .btn-create:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(251,191,36,0.3); }
+
+        /* API section */
+        h3.section-title {
+            font-size: 16px; font-weight: 600; color: #9ca3af;
+            margin: 32px 0 16px; text-transform: uppercase; letter-spacing: 1px;
+        }
         .api-card {
             background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
             border-radius: 12px; padding: 20px 24px; margin-bottom: 12px;
@@ -68,10 +86,11 @@
             display: inline-block; padding: 4px 10px; border-radius: 6px;
             font-size: 12px; font-weight: 600; letter-spacing: 0.5px; margin-right: 12px;
         }
-        .api-card .method.get { background: rgba(52,211,153,0.15); color: #34d399; }
-        .api-card .method.post { background: rgba(129,140,248,0.15); color: #818cf8; }
+        .api-card .method.get    { background: rgba(52,211,153,0.15);  color: #34d399; }
+        .api-card .method.post   { background: rgba(129,140,248,0.15); color: #818cf8; }
+        .api-card .method.put    { background: rgba(59,130,246,0.15);  color: #93c5fd; }
+        .api-card .method.delete { background: rgba(239,68,68,0.15);   color: #fca5a5; }
         .api-card .path { font-size: 14px; font-family: monospace; color: #d1d5db; }
-        h3.section-title { font-size: 16px; font-weight: 600; color: #9ca3af; margin: 32px 0 16px; text-transform: uppercase; letter-spacing: 1px; }
     </style>
 </head>
 <body>
@@ -84,61 +103,95 @@
     </div>
 
     <div class="container">
+
         <div class="welcome-card">
             <h2 id="welcomeHeading">Welcome</h2>
             <p id="welcomeSubtext">Loading...</p>
-            <span class="tenant-badge" id="tenantBadge" style="display:none;"></span>
+            <div id="orgInfo" style="display:none;">
+                <span class="org-badge">
+                    <span id="orgName"></span>
+                    <span class="handle" id="orgHandle"></span>
+                </span>
+                <span class="role-badge" id="memberRole"></span>
+            </div>
         </div>
 
-        <div class="no-tenant-card" id="noTenantCard" style="display:none;">
+        <!-- Shown only when account has no org yet -->
+        <div class="no-org-card" id="noOrgCard" style="display:none;">
             <h3>No Organization Found</h3>
-            <p>You don't belong to any tenant yet. Create your organization to get started.</p>
-            <a href="/create-tenant" class="btn-create">Create Organization</a>
+            <p>You don't belong to any organization yet. Create one to get started.</p>
+            <a href="/create-org" class="btn-create">Create Organization</a>
         </div>
 
+        <!-- Shown when account has an active org -->
         <div id="apiSection" style="display:none;">
             <h3 class="section-title">Available API Endpoints</h3>
             <div class="api-card">
-                <div><span class="method get">GET</span><span class="path">/api/v1/users</span></div>
+                <div>
+                    <span class="method get">GET</span>
+                    <span class="path" id="apiListPath">/org/:handle/api/v1/...</span>
+                </div>
             </div>
             <div class="api-card">
-                <div><span class="method post">POST</span><span class="path">/api/v1/users</span></div>
+                <div>
+                    <span class="method post">POST</span>
+                    <span class="path" id="apiCreatePath">/org/:handle/api/v1/...</span>
+                </div>
             </div>
             <div class="api-card">
-                <div><span class="method get">GET</span><span class="path">/api/v1/tenants</span></div>
+                <div>
+                    <span class="method put">PUT</span>
+                    <span class="path" id="apiUpdatePath">/org/:handle/api/v1/.../:id</span>
+                </div>
             </div>
             <div class="api-card">
-                <div><span class="method post">POST</span><span class="path">/api/v1/tenants</span></div>
+                <div>
+                    <span class="method delete">DELETE</span>
+                    <span class="path" id="apiDeletePath">/org/:handle/api/v1/.../:id</span>
+                </div>
             </div>
         </div>
+
     </div>
 
     <script>
-        const token = localStorage.getItem('access_token');
-        if (!token) {
-            window.location.href = '/login';
-        }
-
         const account = JSON.parse(localStorage.getItem('account') || '{}');
-        document.getElementById('userDisplay').textContent = account.email || '';
-        document.getElementById('welcomeHeading').textContent = `Welcome, ${account.display_name || 'User'}`;
 
-        if (account.tenant_id) {
+        // Display user email in topbar
+        document.getElementById('userDisplay').textContent = account.email || account.auth_account_id || '';
+
+        // Personalise welcome heading
+        const displayName = account.display_name || account.email || 'User';
+        document.getElementById('welcomeHeading').textContent = `Welcome, ${displayName}`;
+
+        if (account.org_id && account.org_handle) {
+            // User has an active org — show org badge + API section
             document.getElementById('welcomeSubtext').textContent = 'Your organization is active.';
-            document.getElementById('tenantBadge').textContent = `Tenant ID: ${account.tenant_id}`;
-            document.getElementById('tenantBadge').style.display = 'inline-block';
+            document.getElementById('orgName').textContent    = account.org_name    || account.org_handle;
+            document.getElementById('orgHandle').textContent  = `@${account.org_handle}`;
+            document.getElementById('memberRole').textContent = account.role || 'Member';
+            document.getElementById('orgInfo').style.display  = 'block';
             document.getElementById('apiSection').style.display = 'block';
+
+            // Fill org-scoped URL examples
+            const h = account.org_handle;
+            document.getElementById('apiListPath').textContent   = `/org/${h}/api/v1/{entity}`;
+            document.getElementById('apiCreatePath').textContent = `/org/${h}/api/v1/{entity}`;
+            document.getElementById('apiUpdatePath').textContent = `/org/${h}/api/v1/{entity}/:id`;
+            document.getElementById('apiDeletePath').textContent = `/org/${h}/api/v1/{entity}/:id`;
         } else {
+            // No org yet
             document.getElementById('welcomeSubtext').textContent = 'Get started by creating your organization.';
-            document.getElementById('noTenantCard').style.display = 'block';
+            document.getElementById('noOrgCard').style.display = 'block';
         }
 
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            localStorage.removeItem('access_token');
-            localStorage.removeItem('refresh_token');
+        // Logout — clear local state, then hit server logout to clear HttpOnly cookies
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
             localStorage.removeItem('account');
-            // Server-side route clears HttpOnly cookies and redirects to /login
-            window.location.href = '/auth/logout';
+            try {
+                await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+            } catch (_) { /* ignore network errors on logout */ }
+            window.location.href = '/login';
         });
     </script>
 </body>

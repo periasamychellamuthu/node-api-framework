@@ -1,4 +1,4 @@
-const TokenService = require('../Auth/TokenService');
+const TokenService = require('./TokenService');
 
 /**
  * IAMAuthMiddleware — Identity & Access Management layer.

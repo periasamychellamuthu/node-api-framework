@@ -1,22 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Security Template Definitions — Input Data Validation Rules
+  Architecture reference: architecture-knowledge-base.md §6, §12
+
+  Each jsontemplate defines what fields are allowed in input_data for a given operation.
+  Fields NOT listed here are silently stripped by APIRequestValidator before the handler sees the request.
+  This is the first line of defense against injection and unexpected input.
+
+  Template naming convention:
+    <entity>_<operation>_template   e.g. member_add_template, module_create_template
+-->
 <security>
-	<jsontemplate name="user_unique" disable-extra-key="true">
-		<key name="name" regex="alpha_numeric" max-len="100" max-occurence="1" />
-		<key name="first_name" regex="alpha_numeric" max-len="100" max-occurence="1" />
-		<key name="last_name" regex="alpha_numeric" max-len="100" max-occurence="1" />
-		<key name="email_address" regex="email" max-len="100" max-occurence="1" />
-		<key name="phone_number" regex="phone" max-len="20" max-occurence="1" />
-		<key name="password" regex="safe_string" max-len="100" max-occurence="1" />
-	</jsontemplate>
-	<jsontemplate name="tenant_unique" disable-extra-key="true">
-		<key name="name" regex="alpha_numeric" max-len="100" max-occurence="1" />
-		<key name="domain" regex="safe_string" max-len="150" max-occurence="1" />
-		<key name="contact_email" regex="email" max-len="150" max-occurence="1" />
-		<key name="subscription_status" regex="alpha_numeric" max-len="30" max-occurence="1" />
-	</jsontemplate>
-	<jsontemplate name="user_api_template" disable-extra-key="true">
-		<key name="user" type="JSONObject" template="user_unique" />
-	</jsontemplate>
-	<jsontemplate name="tenant_api_template" disable-extra-key="true">
-		<key name="tenant" type="JSONObject" template="tenant_unique" />
-	</jsontemplate>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Org Members
+         ═══════════════════════════════════════════════════════════════════════ -->
+
+    <jsontemplate name="member_add_fields" disable-extra-key="true">
+        <!-- Import member by IAM account ID -->
+        <key name="auth_account_id" max-len="19" max-occurence="1" />
+    </jsontemplate>
+
+    <jsontemplate name="member_add_template" disable-extra-key="true">
+        <key name="member" type="JSONObject" template="member_add_fields" />
+    </jsontemplate>
+
+    <jsontemplate name="member_edit_fields" disable-extra-key="true">
+        <key name="status" regex="alpha_numeric" max-len="20" max-occurence="1" />
+    </jsontemplate>
+
+    <jsontemplate name="member_edit_template" disable-extra-key="true">
+        <key name="member" type="JSONObject" template="member_edit_fields" />
+    </jsontemplate>
+
+    <jsontemplate name="member_role_assign_fields" disable-extra-key="true">
+        <key name="role_id" max-len="19" max-occurence="1" />
+    </jsontemplate>
+
+    <jsontemplate name="member_role_assign_template" disable-extra-key="true">
+        <key name="role_assignment" type="JSONObject" template="member_role_assign_fields" />
+    </jsontemplate>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Roles
+         ═══════════════════════════════════════════════════════════════════════ -->
+
+    <jsontemplate name="role_create_fields" disable-extra-key="true">
+        <key name="name"        regex="alpha_numeric" max-len="100" max-occurence="1" />
+        <key name="description" regex="safe_string"   max-len="500" max-occurence="1" />
+    </jsontemplate>
+
+    <jsontemplate name="role_create_template" disable-extra-key="true">
+        <key name="role" type="JSONObject" template="role_create_fields" />
+    </jsontemplate>
+
+    <jsontemplate name="role_edit_fields" disable-extra-key="true">
+        <key name="name"        regex="alpha_numeric" max-len="100" max-occurence="1" />
+        <key name="description" regex="safe_string"   max-len="500" max-occurence="1" />
+    </jsontemplate>
+
+    <jsontemplate name="role_edit_template" disable-extra-key="true">
+        <key name="role" type="JSONObject" template="role_edit_fields" />
+    </jsontemplate>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Custom Modules — Module Definitions
+         ═══════════════════════════════════════════════════════════════════════ -->
+
+    <jsontemplate name="module_create_fields" disable-extra-key="true">
+        <key name="name"          regex="safe_string"   max-len="255" max-occurence="1" />
+        <key name="module_handle" regex="alpha_numeric" max-len="100" max-occurence="1" />
+        <key name="description"   regex="safe_string"   max-len="1000" max-occurence="1" />
+    </jsontemplate>
+
+    <jsontemplate name="module_create_template" disable-extra-key="true">
+        <key name="module" type="JSONObject" template="module_create_fields" />
+    </jsontemplate>
+
+    <jsontemplate name="module_edit_fields" disable-extra-key="true">
+        <key name="name"        regex="safe_string" max-len="255"  max-occurence="1" />
+        <key name="description" regex="safe_string" max-len="1000" max-occurence="1" />
+        <key name="status"      regex="alpha_numeric" max-len="20" max-occurence="1" />
+    </jsontemplate>
+
+    <jsontemplate name="module_edit_template" disable-extra-key="true">
+        <key name="module" type="JSONObject" template="module_edit_fields" />
+    </jsontemplate>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Custom Module Fields
+         ═══════════════════════════════════════════════════════════════════════ -->
+
+    <jsontemplate name="module_field_create_fields" disable-extra-key="true">
+        <key name="field_name"    regex="alpha_numeric" max-len="100" max-occurence="1" />
+        <key name="field_label"   regex="safe_string"   max-len="255" max-occurence="1" />
+        <key name="field_type"    regex="alpha_numeric" max-len="50"  max-occurence="1" />
+        <key name="is_required"   max-len="5"           max-occurence="1" />
+        <key name="is_unique"     max-len="5"           max-occurence="1" />
+        <key name="default_value" regex="safe_string"   max-len="500" max-occurence="1" />
+        <key name="field_order"   max-len="5"           max-occurence="1" />
+        <key name="config_json"   max-len="5000"        max-occurence="1" />
+    </jsontemplate>
+
+    <jsontemplate name="module_field_create_template" disable-extra-key="true">
+        <key name="field" type="JSONObject" template="module_field_create_fields" />
+    </jsontemplate>
+
+    <jsontemplate name="module_field_edit_fields" disable-extra-key="true">
+        <key name="field_label"   regex="safe_string"   max-len="255" max-occurence="1" />
+        <key name="is_required"   max-len="5"           max-occurence="1" />
+        <key name="default_value" regex="safe_string"   max-len="500" max-occurence="1" />
+        <key name="field_order"   max-len="5"           max-occurence="1" />
+        <key name="config_json"   max-len="5000"        max-occurence="1" />
+        <key name="status"        regex="alpha_numeric" max-len="20"  max-occurence="1" />
+    </jsontemplate>
+
+    <jsontemplate name="module_field_edit_template" disable-extra-key="true">
+        <key name="field" type="JSONObject" template="module_field_edit_fields" />
+    </jsontemplate>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Custom Module Records (EAV)
+         ═══════════════════════════════════════════════════════════════════════ -->
+
+    <!-- field_value_entry: one entry in the values array for a record create/edit -->
+    <jsontemplate name="field_value_entry" disable-extra-key="true">
+        <key name="field_id"     max-len="19"    max-occurence="1" />
+        <key name="value_text"   regex="safe_string" max-len="65535" max-occurence="1" />
+        <key name="value_number" max-len="25"    max-occurence="1" />
+        <key name="value_date"   max-len="30"    max-occurence="1" />
+    </jsontemplate>
+
+    <jsontemplate name="module_record_add_fields" disable-extra-key="true">
+        <!-- values is a JSONArray of field_value_entry objects -->
+        <key name="values" type="JSONArray" data-template="field_value_entry" max-occurence="500" />
+    </jsontemplate>
+
+    <jsontemplate name="module_record_add_template" disable-extra-key="true">
+        <key name="record" type="JSONObject" template="module_record_add_fields" />
+    </jsontemplate>
+
+    <jsontemplate name="module_record_edit_template" disable-extra-key="true">
+        <key name="record" type="JSONObject" template="module_record_add_fields" />
+    </jsontemplate>
+
 </security>

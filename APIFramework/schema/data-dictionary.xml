@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<data-dictionary name="framework">
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       IAM — Identity & Access Management
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <table name="iam_auth_accounts">
+    <columns>
+      <column name="auth_account_id">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+        <auto-increment>true</auto-increment>
+      </column>
+      <column name="email">
+        <data-type>VARCHAR</data-type>
+        <max-size>255</max-size>
+        <nullable>false</nullable>
+        <unique>true</unique>
+      </column>
+      <column name="password_hash">
+        <data-type>VARCHAR</data-type>
+        <max-size>512</max-size>
+        <nullable>true</nullable>
+      </column>
+      <column name="auth_provider">
+        <data-type>VARCHAR</data-type>
+        <max-size>50</max-size>
+        <nullable>false</nullable>
+        <default>local</default>
+      </column>
+      <column name="is_email_verified">
+        <data-type>BOOLEAN</data-type>
+        <nullable>false</nullable>
+        <default>0</default>
+      </column>
+      <column name="status">
+        <data-type>VARCHAR</data-type>
+        <max-size>20</max-size>
+        <nullable>false</nullable>
+        <default>active</default>
+      </column>
+      <column name="created_at">
+        <data-type>DATETIME</data-type>
+        <nullable>false</nullable>
+      </column>
+      <column name="last_login_at">
+        <data-type>DATETIME</data-type>
+        <nullable>true</nullable>
+      </column>
+    </columns>
+    <primary-key name="iam_auth_accounts_PK">
+      <primary-key-column>auth_account_id</primary-key-column>
+    </primary-key>
+  </table>
+
+  <table name="iam_account_profiles">
+    <columns>
+      <column name="profile_id">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+        <auto-increment>true</auto-increment>
+      </column>
+      <column name="auth_account_id">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+      </column>
+      <column name="display_name">
+        <data-type>VARCHAR</data-type>
+        <max-size>255</max-size>
+        <nullable>true</nullable>
+      </column>
+      <column name="phone">
+        <data-type>VARCHAR</data-type>
+        <max-size>50</max-size>
+        <nullable>true</nullable>
+      </column>
+      <column name="street">
+        <data-type>VARCHAR</data-type>
+        <max-size>500</max-size>
+        <nullable>true</nullable>
+      </column>
+      <column name="city">
+        <data-type>VARCHAR</data-type>
+        <max-size>100</max-size>
+        <nullable>true</nullable>
+      </column>
+      <column name="state">
+        <data-type>VARCHAR</data-type>
+        <max-size>100</max-size>
+        <nullable>true</nullable>
+      </column>
+      <column name="country">
+        <data-type>VARCHAR</data-type>
+        <max-size>100</max-size>
+        <nullable>true</nullable>
+      </column>
+      <column name="postal_code">
+        <data-type>VARCHAR</data-type>
+        <max-size>20</max-size>
+        <nullable>true</nullable>
+      </column>
+      <column name="updated_at">
+        <data-type>DATETIME</data-type>
+        <nullable>true</nullable>
+      </column>
+    </columns>
+    <primary-key name="iam_account_profiles_PK">
+      <primary-key-column>profile_id</primary-key-column>
+    </primary-key>
+    <indexes>
+      <index name="idx_iam_profiles_account" unique="false">
+        <index-column>auth_account_id</index-column>
+      </index>
+    </indexes>
+    <foreign-keys>
+      <foreign-key name="iam_account_profiles_account_FK">
+        <fk-column>auth_account_id</fk-column>
+        <ref-table>iam_auth_accounts</ref-table>
+        <ref-column>auth_account_id</ref-column>
+      </foreign-key>
+    </foreign-keys>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Token Blacklist
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <table name="token_blacklist">
+    <columns>
+      <column name="jti">
+        <data-type>VARCHAR</data-type>
+        <max-size>36</max-size>
+        <nullable>false</nullable>
+      </column>
+      <column name="auth_account_id">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+      </column>
+      <column name="reason">
+        <data-type>VARCHAR</data-type>
+        <max-size>50</max-size>
+        <nullable>true</nullable>
+      </column>
+      <column name="blacklisted_at">
+        <data-type>DATETIME</data-type>
+        <nullable>false</nullable>
+      </column>
+      <column name="expires_at">
+        <data-type>DATETIME</data-type>
+        <nullable>false</nullable>
+      </column>
+    </columns>
+    <primary-key name="token_blacklist_PK">
+      <primary-key-column>jti</primary-key-column>
+    </primary-key>
+    <indexes>
+      <index name="idx_token_blacklist_expires" unique="false">
+        <index-column>expires_at</index-column>
+      </index>
+    </indexes>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Organizations
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <table name="organizations">
+    <columns>
+      <column name="org_id">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+        <auto-increment>true</auto-increment>
+      </column>
+      <column name="name">
+        <data-type>VARCHAR</data-type>
+        <max-size>255</max-size>
+        <nullable>false</nullable>
+      </column>
+      <column name="org_handle">
+        <data-type>VARCHAR</data-type>
+        <max-size>100</max-size>
+        <nullable>false</nullable>
+        <unique>true</unique>
+      </column>
+      <column name="domain">
+        <data-type>VARCHAR</data-type>
+        <max-size>255</max-size>
+        <nullable>true</nullable>
+      </column>
+      <column name="status">
+        <data-type>VARCHAR</data-type>
+        <max-size>20</max-size>
+        <nullable>false</nullable>
+        <default>active</default>
+      </column>
+      <column name="created_at">
+        <data-type>DATETIME</data-type>
+        <nullable>false</nullable>
+      </column>
+    </columns>
+    <primary-key name="organizations_PK">
+      <primary-key-column>org_id</primary-key-column>
+    </primary-key>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       ID Range Allocator  (single seeded row — 'global')
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <table name="id_range_allocator">
+    <columns>
+      <column name="allocator_key">
+        <data-type>VARCHAR</data-type>
+        <max-size>50</max-size>
+        <nullable>false</nullable>
+        <default>global</default>
+      </column>
+      <column name="last_range_end">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+        <default>0</default>
+      </column>
+      <column name="block_size">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+        <default>10000000</default>
+      </column>
+    </columns>
+    <primary-key name="id_range_allocator_PK">
+      <primary-key-column>allocator_key</primary-key-column>
+    </primary-key>
+    <seed>
+      <row>
+        <value column="allocator_key">global</value>
+        <value column="last_range_end">0</value>
+        <value column="block_size">10000000</value>
+      </row>
+    </seed>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Org ID Ranges
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <table name="org_id_ranges">
+    <columns>
+      <column name="org_id">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+      </column>
+      <column name="range_start">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+      </column>
+      <column name="range_end">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+      </column>
+      <column name="current_val">
+        <data-type>BIGINT</data-type>
+        <nullable>false</nullable>
+        <default>0</default>
+      </column>
+      <column name="allocated_at">
+        <data-type>DATETIME</data-type>
+        <nullable>false</nullable>
+      </column>
+    </columns>
+    <primary-key name="org_id_ranges_PK">
+      <primary-key-column>org_id</primary-key-column>
+    </primary-key>
+    <foreign-keys>
+      <foreign-key name="org_id_ranges_org_FK">
+        <fk-column>org_id</fk-column>
+        <ref-table>organizations</ref-table>
+        <ref-column>org_id</ref-column>
+      </foreign-key>
+    </foreign-keys>
+  </table>
+
+</data-dictionary>

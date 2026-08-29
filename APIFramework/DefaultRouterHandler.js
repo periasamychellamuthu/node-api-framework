@@ -1,61 +1,18 @@
-var APIRequest = require('./API/APIRequest');
-const EntityConfigLoader = require('./Registry/EntityConfigLoader');
+const APIRequest   = require('./API/APIRequest');
+const APIConstants = require('./API/constants');
 
-function DefaultRouterHandler() {
-    this.handleRequest = async function (req, res) {
-        // Security checks (URL whitelisting, role check, input_data template validation)
-        // are handled by XMLSecurityMiddleware in the middleware chain before this point.
+async function handleRequest(req, res) {
+    req._strippedPath = APIConstants.stripOrgPrefix(req.path);
 
-        // 2. Parse URL to Extract Entity & Operation
-        const segments = req.path.split('/').filter(s => s.length > 0);
-        let entityPath = `/${segments[0]}`;
+    const apiRequest = new APIRequest(req, res);
 
-        // Handling /api/v1 prefix gracefully if present
-        if (segments.length >= 3 && segments[0] === 'api' && segments[1] === 'v1') {
-            entityPath = `/${segments[2]}`;
-        }
-
-        const entityConfig = EntityConfigLoader.getAllEntities().find(e => e.path === entityPath);
-        if (!entityConfig) {
-            return res.status(404).json({ error: "Endpoint not found: No matching entity definition." });
-        }
-
-        req._entityConfig = entityConfig;
-
-        const method = req.method.toLowerCase();
-        let isCollection = true;
-        // Basic check if it's an instance endpoint /users/1
-        if ((segments[0] === 'api' && segments.length > 3) || (segments[0] !== 'api' && segments.length > 1)) {
-            isCollection = false;
-        }
-
-        const lastSeg = segments[segments.length - 1];
-        if (lastSeg === '_metainfo') req._operation = 'metainfo';
-        else if (lastSeg === '_links') req._operation = 'links';
-        else if (lastSeg.startsWith('_')) req._operation = lastSeg.substring(1);
-        else {
-            if (method === 'get') req._operation = 'GET';
-            else if (method === 'post') req._operation = 'POST';
-            else if (method === 'put') req._operation = 'PUT';
-            else if (method === 'delete') req._operation = 'DELETE';
-            else req._operation = 'unknown';
-        }
-
-        const apiRequest = new APIRequest(req, res);
-        apiRequest.operation      = req._operation;
-        apiRequest._entityConfig  = req._entityConfig;  // forward raw config for ResponseTransformer / ListenerDispatcher
-
-        if (!apiRequest.entity) {
-            return res.status(400).send({
-                "status": 400,
-                "error": "Invalid input: Entity not found"
-            });
-        }
-
-        var handler = apiRequest.entity.getHandlerInstance();
-        // Kickoff handler pipeline correctly
-        handler.handleAPICall(apiRequest);
+    if (!apiRequest.entity || !apiRequest.entity.getHandlerInstance) {
+        return res.status(404).json({
+            response_status: { status_code: 4004, status: 'failed', message: 'Entity not found.' }
+        });
     }
+
+    apiRequest.entity.getHandlerInstance().handleAPICall(apiRequest);
 }
 
-module.exports = new DefaultRouterHandler();
+module.exports = { handleRequest };

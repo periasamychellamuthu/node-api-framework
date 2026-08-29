@@ -1,98 +1,45 @@
-const { QueryConstants, Criteria, Column } = require('./QueryModel');
-
+/**
+ * DBUtils — Framework-level query utilities.
+ *
+ * After migration to Knex.js:
+ *   - getSelectQueryAsSQL()  → retired (was: custom SelectQuery → SQL serializer)
+ *   - resolveCriteria()      → retired (was: Criteria tree serializer)
+ *   - applyRangeScoping()    → retired (was: injects BETWEEN on SelectQuery)
+ *
+ *   All of the above are now handled by Knex chains in PreDefaultEntityHandler:
+ *     getList   → knex(table).whereBetween(pk, [rangeStart, rangeEnd])
+ *     getEntity → knex(table).where(pk, id).whereBetween(pk, [start, end]).first()
+ *     add       → knex(table).insert(data)
+ *     edit      → knex(table).where(pk, id).update(data)
+ *     delete    → knex(table).where(pk, id).delete()
+ *
+ * What remains:
+ *   - resolvePlaceholders()  — still used by DefaultEntityValidator.fillDefaults stage
+ *     to expand $now / $currentUser / $currentMember tokens in entity config default values.
+ */
 class DBUtils {
-    /**
-     * Serializes the programmatic Query object into a parameterized SQL Query array.
-     */
-    static getSelectQueryAsSQL(selectQuery) {
-        let sql = 'SELECT ';
-        
-        if (selectQuery.selectColumns.length === 0) {
-            sql += '* ';
-        } else {
-            sql += selectQuery.selectColumns.map(c => `${c.table.alias}.${c.columnName}`).join(', ') + ' ';
-        }
-
-        sql += `FROM ${selectQuery.baseTable.tableName} AS ${selectQuery.baseTable.alias} `;
-
-        selectQuery.joins.forEach(join => {
-            sql += `${join.joinType} ${join.joinTable.tableName} AS ${join.joinTable.alias} ON `;
-            let onConditions = [];
-            for (let i = 0; i < join.baseColumns.length; i++) {
-                onConditions.push(`${join.baseTable.alias}.${join.baseColumns[i]} = ${join.joinTable.alias}.${join.joinColumns[i]}`);
-            }
-            sql += onConditions.join(' AND ') + ' ';
-        });
-
-        const params = [];
-        if (selectQuery.criteria) {
-            const { criteriaSql, criteriaParams } = this.resolveCriteria(selectQuery.criteria);
-            sql += `WHERE ${criteriaSql} `;
-            params.push(...criteriaParams);
-        }
-
-        if (selectQuery.sortColumns.length > 0) {
-            sql += 'ORDER BY ' + selectQuery.sortColumns.map(s => `${s.column.table.alias}.${s.column.columnName} ${s.sortOrder}`).join(', ') + ' ';
-        }
-
-        if (selectQuery.range) {
-            sql += `LIMIT ? OFFSET ?`;
-            params.push(selectQuery.range.limit, selectQuery.range.offset);
-        }
-
-        return { sql: sql.trim(), params };
-    }
-
-    static resolveCriteria(criteria) {
-        if (criteria.groupedCriteria && criteria.groupedCriteria.length > 0) {
-            const left = this.resolveCriteria(criteria.groupedCriteria[0]);
-            const right = this.resolveCriteria(criteria.groupedCriteria[1]);
-            return {
-                criteriaSql: `(${left.criteriaSql} ${criteria.logicalOperator} ${right.criteriaSql})`,
-                criteriaParams: [...left.criteriaParams, ...right.criteriaParams]
-            };
-        }
-
-        let conditionSql = '';
-        if (criteria.condition === QueryConstants.IN || criteria.condition === QueryConstants.NOT_IN) {
-            const placeholders = criteria.value.map(() => '?').join(', ');
-            conditionSql = `${criteria.column.table.alias}.${criteria.column.columnName} ${criteria.condition} (${placeholders})`;
-            return { criteriaSql: conditionSql, criteriaParams: [...criteria.value] };
-        } else {
-            conditionSql = `${criteria.column.table.alias}.${criteria.column.columnName} ${criteria.condition} ?`;
-            return { criteriaSql: conditionSql, criteriaParams: [criteria.value] };
-        }
-    }
 
     /**
-     * Applies the mandatory auto-tenant scoping rules.
-     */
-    static applyTenantScoping(selectQuery, tenantId) {
-        const tenantCriteria = new Criteria(
-            Column.getColumn(selectQuery.baseTable, 'tenant_id'), 
-            tenantId, 
-            QueryConstants.EQUAL
-        );
-        
-        if (selectQuery.criteria) {
-            selectQuery.criteria = selectQuery.criteria.and(tenantCriteria);
-        } else {
-            selectQuery.criteria = tenantCriteria;
-        }
-        console.log(`[DBUtils] Auto-Tenant Scoping applied for tenant: ${tenantId}`);
-    }
-
-    /**
-     * Resolves metadata placeholders natively required by the framework.
+     * Resolves metadata placeholder strings used in entity config default values.
+     *
+     *   '$now'           → current ISO timestamp
+     *   '$currentUser'   → req.authAccountId  (IAM identity — for framework-level audit fields)
+     *   '$currentMember' → req.memberId       (product identity — for created_by, audit fields)
+     *
+     * Called by DefaultEntityValidator during the fillDefaults validation stage.
+     *
+     * @param {*}      fieldValue  — raw value from entity config (may or may not be a placeholder)
+     * @param {object} req         — Express request object (set by OrgContextFilter / SecurityGatewayFilter)
+     * @returns resolved value
      */
     static resolvePlaceholders(fieldValue, req) {
         if (typeof fieldValue !== 'string') return fieldValue;
 
         switch (fieldValue) {
-            case '$now': return new Date().toISOString();
-            case '$currentUser': return req.$currentUser;
-            case '$currentTenant': return req.$currentTenant;
-            default: return fieldValue;
+            case '$now':           return new Date().toISOString();
+            case '$currentUser':   return req.authAccountId;
+            case '$currentMember': return req.memberId;
+            default:               return fieldValue;
         }
     }
 }

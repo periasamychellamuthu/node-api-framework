@@ -75,7 +75,7 @@
         <form id="signupForm">
             <div class="form-group">
                 <label for="display_name">Display Name</label>
-                <input type="text" id="display_name" placeholder="Your full name" required>
+                <input type="text" id="display_name" placeholder="Your full name" required autocomplete="name">
             </div>
             <div class="form-group">
                 <label for="email">Email</label>
@@ -94,8 +94,8 @@
     </div>
 
     <script>
-        const form = document.getElementById('signupForm');
-        const errorMsg = document.getElementById('errorMsg');
+        const form      = document.getElementById('signupForm');
+        const errorMsg  = document.getElementById('errorMsg');
         const submitBtn = document.getElementById('submitBtn');
 
         form.addEventListener('submit', async (e) => {
@@ -108,12 +108,13 @@
                 const resp = await fetch('/auth/signup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',   // receive iam_adt / iam_bdt cookies
                     body: JSON.stringify({
                         input_data: {
                             auth_account: {
-                                email: document.getElementById('email').value,
-                                password: document.getElementById('password').value,
-                                display_name: document.getElementById('display_name').value
+                                email:        document.getElementById('email').value.trim(),
+                                password:     document.getElementById('password').value,
+                                display_name: document.getElementById('display_name').value.trim()
                             }
                         }
                     })
@@ -121,13 +122,15 @@
 
                 const data = await resp.json();
 
-                if (resp.ok && data.token) {
-                    localStorage.setItem('access_token', data.token.access_token);
-                    localStorage.setItem('refresh_token', data.token.refresh_token);
-                    localStorage.setItem('account', JSON.stringify(data.auth_account));
-                    window.location.href = '/';
+                if (resp.ok && data.response_status?.status === 'success') {
+                    // Signup succeeded — no org exists yet.
+                    // Cookies (iam_adt / iam_bdt) are already set by the server.
+                    // Store lightweight account info for UI display only.
+                    localStorage.setItem('account', JSON.stringify(data.auth_account || {}));
+                    // New users must create an org before they can access the platform.
+                    window.location.href = '/create-org';
                 } else {
-                    errorMsg.textContent = data.response_status?.message || 'Signup failed';
+                    errorMsg.textContent = data.response_status?.message || 'Signup failed. Please try again.';
                     errorMsg.style.display = 'block';
                 }
             } catch (err) {

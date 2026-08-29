@@ -7,7 +7,9 @@ function Field(json){
     this.foreignKeyMapping =(json.ForeignKey_mapping?json.ForeignKey_mapping:null);
     this.isCollection =(json.isCollection?json.isCollection:false);
     this.standaloneCRUD =(json.standaloneCRUD?json.standaloneCRUD:false);
-    this.nullable = (json.nullable !== undefined ? json.nullable : true);
+    this.nullable    = (json.nullable !== undefined ? json.nullable : true);
+    this.internal    = (json.internal !== undefined ? json.internal : false);
+    this.constraints = json.constraints || null;
 
     this.getRefEntity = function(){
         var Entity = require("./Entity");

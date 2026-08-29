@@ -1,27 +1,17 @@
 class ResponseTransformer {
-    /**
-     * Transforms and wraps the internal response object into the Versatile standard `response_status` envelope format.
-     */
-    static transform(entityConfig, operation, resultData) {
-        console.log(`[ResponseTransformer] Shaping response for ${entityConfig.entityName}:${operation}`);
-
-        // Strip out internal fields if necessary
-        const safeData = this.stripInternalFields(entityConfig, resultData);
-
-        // Encapsulate into the Versatile framework standard response
+    static transform(entity, operation, resultData) {
+        const safeData = this.stripInternalFields(entity, resultData);
         return {
-            response_status: {
-                status: 'success',
-                message: 'Operation successful'
-            },
-            [entityConfig.pluralName || entityConfig.entityName]: safeData
+            response_status: { status: 'success', message: 'Operation successful' },
+            [entity.getPluralName()]: safeData
         };
     }
 
-    static stripInternalFields(entityConfig, payload) {
+    static stripInternalFields(entity, payload) {
         if (!payload) return payload;
 
-        const internalFields = (entityConfig.fields || [])
+        const fieldsMap      = entity.getFields ? entity.getFields() : {};
+        const internalFields = Object.values(fieldsMap)
             .filter(f => f.internal === true)
             .map(f => f.name);
 

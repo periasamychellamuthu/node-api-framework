@@ -1,86 +1,131 @@
-const fs = require('fs');
-const path = require('path');
+'use strict';
+
+const fs     = require('fs');
+const path   = require('path');
 const xml2js = require('xml2js');
 
 class DataDictionaryParser {
     constructor() {
-        // Flat map caching memory properties. E.g. DD_MAP["users.username"] = { "data-type": "CHAR", "max-size": 50 }
-        this.DD_MAP = {};
-        this.TABLE_DEFINITIONS = [];
+        this.DD_MAP             = {};   // "table.col" → { data-type, max-size, nullable, unique, auto-increment, default }
+        this.FK_MAP             = {};   // tableName   → [{ name, fkColumn, refTable, refColumn }]
+        this.INDEX_MAP          = {};   // tableName   → [{ name, unique, columns[] }]
+        this.SEED_MAP           = {};   // tableName   → [{ col: value, ... }]
+        this.TABLE_DEFINITIONS  = [];   // raw parsed table nodes (used by SchemaBuilder for DDL)
     }
 
-    async parseDataDictionaries(ddDirPath) {
-        if (!fs.existsSync(ddDirPath)) {
-            console.warn(`[DataDictionaryParser] Directory not found: ${ddDirPath}`);
-            return;
-        }
-
-        const parser = new xml2js.Parser();
-
-        // Collect all XML files that sit directly inside ddDirPath (flat layout).
-        // e.g. src/schema/data-dictionary.xml
-        // Subdirectory / dd-files.xml support is deferred to a later phase.
+    async parseDataDictionaries(...ddDirPaths) {
+        const parser         = new xml2js.Parser();
         const xmlFilesToParse = [];
 
-        const entries = fs.readdirSync(ddDirPath, { withFileTypes: true });
-
-        for (const entry of entries) {
-            if (entry.isFile() && entry.name.endsWith('.xml')) {
-                xmlFilesToParse.push(path.join(ddDirPath, entry.name));
+        for (const ddDirPath of ddDirPaths.flat()) {
+            if (!fs.existsSync(ddDirPath)) {
+                console.warn(`[DataDictionaryParser] Directory not found: ${ddDirPath}`);
+                continue;
+            }
+            const entries = fs.readdirSync(ddDirPath, { withFileTypes: true });
+            for (const entry of entries) {
+                if (entry.isFile() && entry.name.endsWith('.xml')) {
+                    xmlFilesToParse.push(path.join(ddDirPath, entry.name));
+                }
             }
         }
 
-        // Parse every collected XML file into DD_MAP and TABLE_DEFINITIONS
         for (const filePath of xmlFilesToParse) {
             try {
-                const xmlData = fs.readFileSync(filePath, 'utf-8');
+                const xmlData    = fs.readFileSync(filePath, 'utf-8');
                 const parsedData = await parser.parseStringPromise(xmlData);
 
-                if (parsedData['data-dictionary'] && parsedData['data-dictionary'].table) {
-                    const tables = Array.isArray(parsedData['data-dictionary'].table)
-                        ? parsedData['data-dictionary'].table
-                        : [parsedData['data-dictionary'].table];
+                if (!parsedData['data-dictionary'] || !parsedData['data-dictionary'].table) continue;
 
-                    tables.forEach(table => {
-                        this.TABLE_DEFINITIONS.push(table);
-                        const tableName = table.$.name;
+                const tables = Array.isArray(parsedData['data-dictionary'].table)
+                    ? parsedData['data-dictionary'].table
+                    : [parsedData['data-dictionary'].table];
 
-                        if (table.columns && table.columns[0] && table.columns[0].column) {
-                            const columns = Array.isArray(table.columns[0].column)
-                                ? table.columns[0].column
-                                : [table.columns[0].column];
+                tables.forEach(table => {
+                    this.TABLE_DEFINITIONS.push(table);
+                    const tableName = table.$.name;
 
-                            columns.forEach(col => {
-                                const colName = col.$.name;
-                                this.DD_MAP[`${tableName}.${colName}`] = {
-                                    'data-type': col['data-type'] && col['data-type'][0] ? col['data-type'][0] : null,
-                                    'max-size':  col['max-size']  && col['max-size'][0]  ? parseInt(col['max-size'][0], 10) : null,
-                                    'nullable':  col.nullable  && col.nullable[0]  === 'true',
-                                    'unique':    col.unique    && col.unique[0]    === 'true'
-                                };
-                            });
-                        }
+                    // ── Columns → DD_MAP ─────────────────────────────────────
+                    const colNodes = table.columns?.[0]?.column ?? [];
+                    const cols = Array.isArray(colNodes) ? colNodes : [colNodes];
+                    cols.forEach(col => {
+                        const colName = col.$.name;
+                        this.DD_MAP[`${tableName}.${colName}`] = {
+                            'data-type':      col['data-type']?.[0]      ?? null,
+                            'max-size':       col['max-size']?.[0]       ? parseInt(col['max-size'][0], 10) : null,
+                            'nullable':       col.nullable?.[0]          === 'true',
+                            'unique':         col.unique?.[0]            === 'true',
+                            'auto-increment': col['auto-increment']?.[0] === 'true',
+                            'default':        col.default?.[0]           ?? null,
+                        };
                     });
-                }
+
+                    // ── Foreign keys → FK_MAP ────────────────────────────────
+                    const fkNodes = table['foreign-keys']?.[0]?.['foreign-key'];
+                    if (fkNodes) {
+                        const fks = Array.isArray(fkNodes) ? fkNodes : [fkNodes];
+                        this.FK_MAP[tableName] = fks.map(fk => ({
+                            name:      fk.$.name,
+                            fkColumn:  fk['fk-column']?.[0]  ?? null,
+                            refTable:  fk['ref-table']?.[0]  ?? null,
+                            refColumn: fk['ref-column']?.[0] ?? null,
+                        }));
+                        console.log(`[DataDictionaryParser] Registered ${this.FK_MAP[tableName].length} FK(s) for table: ${tableName}`);
+                    }
+
+                    // ── Indexes → INDEX_MAP ──────────────────────────────────
+                    const idxNodes = table.indexes?.[0]?.index;
+                    if (idxNodes) {
+                        const idxs = Array.isArray(idxNodes) ? idxNodes : [idxNodes];
+                        this.INDEX_MAP[tableName] = idxs.map(idx => ({
+                            name:    idx.$.name,
+                            unique:  idx.$.unique === 'true',
+                            columns: (Array.isArray(idx['index-column']) ? idx['index-column'] : [idx['index-column']]).filter(Boolean),
+                        }));
+                    }
+
+                    // ── Seed rows → SEED_MAP ─────────────────────────────────
+                    const seedNodes = table.seed?.[0]?.row;
+                    if (seedNodes) {
+                        const rows = Array.isArray(seedNodes) ? seedNodes : [seedNodes];
+                        this.SEED_MAP[tableName] = rows.map(row => {
+                            const obj = {};
+                            const vals = Array.isArray(row.value) ? row.value : [row.value];
+                            vals.forEach(v => { obj[v.$.column] = v._; });
+                            return obj;
+                        });
+                    }
+                });
+
             } catch (e) {
                 console.error(`[DataDictionaryParser] Failed parsing ${filePath}:`, e.message);
             }
         }
 
-        console.log(`[DataDictionaryParser] Parsed ${xmlFilesToParse.length} file(s). Mapped ${Object.keys(this.DD_MAP).length} columns across ${this.TABLE_DEFINITIONS.length} tables.`);
+        const fkTotal = Object.values(this.FK_MAP).reduce((s, a) => s + a.length, 0);
+        console.log(
+            `[DataDictionaryParser] Parsed ${xmlFilesToParse.length} file(s). ` +
+            `Mapped ${Object.keys(this.DD_MAP).length} columns across ${this.TABLE_DEFINITIONS.length} tables. ` +
+            `Registered ${fkTotal} FK(s) across ${Object.keys(this.FK_MAP).length} table(s).`
+        );
     }
 
-    /**
-     * Retrieves specific dictionary properties mapping table + column structure.
-     */
     getColumnProperty(tableName, columnName, propertyKey) {
         const mapping = this.DD_MAP[`${tableName}.${columnName}`];
-        if (mapping && typeof mapping[propertyKey] !== 'undefined') {
-            return mapping[propertyKey];
-        }
-        return null;
+        return (mapping && mapping[propertyKey] !== undefined) ? mapping[propertyKey] : null;
+    }
+
+    getTableForeignKeys(tableName) {
+        return this.FK_MAP[tableName] || [];
+    }
+
+    getTableIndexes(tableName) {
+        return this.INDEX_MAP[tableName] || [];
+    }
+
+    getTableSeedRows(tableName) {
+        return this.SEED_MAP[tableName] || [];
     }
 }
 
-// Single active cached map 
 module.exports = new DataDictionaryParser();

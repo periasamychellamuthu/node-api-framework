@@ -1,0 +1,72 @@
+{
+  "entityName": "org_member",
+  "pluralName": "members",
+  "path": "/members",
+  "tableName": "org_members",
+  "handler": "DefaultEntityHandler",
+  "validator": "DefaultEntityValidator",
+  "listeners": [],
+  "fields": [
+    {
+      "name": "member_id",
+      "relational_mapping": "org_members.member_id",
+      "is_identifier": true,
+      "nullable": false,
+      "internal": false
+    },
+    {
+      "name": "auth_account_id",
+      "relational_mapping": "org_members.auth_account_id",
+      "nullable": false,
+      "internal": false
+    },
+    {
+      "name": "status",
+      "relational_mapping": "org_members.status",
+      "nullable": false
+    },
+    {
+      "name": "joined_at",
+      "relational_mapping": "org_members.joined_at",
+      "nullable": false,
+      "internal": false
+    }
+  ],
+  "operations": [
+    {
+      "name": "get_list",
+      "method": "get",
+      "without_id": true,
+      "roles": ["SDAdmin"],
+      "description": "List all members in the org — SDAdmin only"
+    },
+    {
+      "name": "get",
+      "method": "get",
+      "without_id": false,
+      "roles": ["SDAdmin"],
+      "description": "Get a specific member by member_id — SDAdmin only"
+    },
+    {
+      "name": "add",
+      "method": "post",
+      "without_id": true,
+      "roles": ["SDAdmin"],
+      "description": "Import a user into the org by auth_account_id — SDAdmin only"
+    },
+    {
+      "name": "edit",
+      "method": "put",
+      "without_id": false,
+      "roles": ["SDAdmin"],
+      "description": "Update member status (active/suspended) — SDAdmin only"
+    },
+    {
+      "name": "delete",
+      "method": "delete",
+      "without_id": false,
+      "roles": ["SDAdmin"],
+      "description": "Remove member from org — SDAdmin only"
+    }
+  ]
+}

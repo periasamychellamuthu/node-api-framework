@@ -1,313 +1,174 @@
-const SQLConnect = require('../Database/DBConnectionPool');
-const sqlQueryBuilder = require('../Database/QueryBuilder/DBUtils');
-const Entity = require('../API/Entity');
+const PreDefaultEntityHandler = require('./PreDefaultEntityHandler');
+const DefaultEntityValidator  = require('../Validation/DefaultEntityValidator');
+const ListenerDispatcher      = require('../Listener/ListenerDispatcher');
+const SequenceGenerator       = require('../Database/SequenceGenerator');
+const SQLConnect              = require('../Database/DBConnectionPool');
+const DBUtils                 = require('../Database/QueryBuilder/DBUtils');
+const { SelectQuery, Criteria, Column, QueryConstants } = require('../Database/QueryBuilder/QueryModel');
+const JSONDOConverter         = require('../Transformer/JSONDOConverter');
+const ResponseTransformer     = require('../Transformer/ResponseTransformer');
+const Entity                  = require('../API/Entity');
 
-function DefaultEntityHandler() {
-    this.APIRequest = null;
-    this.entity = null;
-    this.queryBuilder = sqlQueryBuilder;
+/**
+ * DefaultEntityHandler
+ *
+ * The framework's default entity handler — used by ALL entity configs that do NOT
+ * specify a custom domain handler (i.e. "handler": "DefaultEntityHandler" in entity JSON).
+ *
+ * Extends PreDefaultEntityHandler which owns all CRUD implementations
+ * (add / edit / delete / getList / getEntity). This class inherits all of them.
+ *
+ * Previously this was defaultEntityHandler.js (git: 9ff288c) — a function-constructor
+ * style class backed by node-querybuilder (SQLConnect.runBuilder + queryGeneratorAndExecutor).
+ * That approach has been superseded by the new DBConnectionPool + SelectQuery + DBUtils APIs.
+ *
+ * What was in the old implementation              → What it maps to now
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SQLConnect.runBuilder(cb)                       → SQLConnect.query() / SQLConnect.withConnection()
+ * queryBuilder.queryGet(qb, apiReq, cb)           → SelectQuery + DBUtils.getSelectQueryAsSQL + SQLConnect.query
+ * queryBuilder.queryInsert(qb, {table,data})      → INSERT INTO raw SQL via SQLConnect.query
+ * queryBuilder.queryUpdate(qb, {table,data,crit}) → UPDATE raw SQL via SQLConnect.query
+ * queryBuilder.queryDelete(qb, {table})           → DELETE raw SQL via SQLConnect.query
+ * queryBuilder._applyTenantBounds(qb, req)        → DBUtils.applyRangeScoping(selectQuery, rangeStart, rangeEnd, pkCol)
+ * SequenceGenerator.getNextId(tenantId, genName)  → SequenceGenerator.getNextId(orgId)   [one arg, numeric]
+ * $credentials.tenantId                           → req.orgId  (set by OrgContextFilter)
+ *
+ * All add/edit/delete/getList/getEntity logic lives in PreDefaultEntityHandler.
+ * This class retains the internal helper methods from the old implementation
+ * (convertTOJSON, getInputValuesFromInputData, executeResult, etc.) which are
+ * still useful for domain handlers that extend this class.
+ *
+ * Architecture reference: architecture-knowledge-base.md §1, §5, §12
+ * Git reference: 9ff288c (old defaultEntityHandler.js implementation pattern)
+ */
+class DefaultEntityHandler extends PreDefaultEntityHandler {
 
-    this.convertTOJSON = function (APIRequest) {
-        if (APIRequest.dataObject instanceof Array) {
-            APIRequest.result = [];
-            for (var i = 0; i < APIRequest.dataObject.length; i++) {
-                APIRequest.result.push(iterateFieldsAndGetResult(APIRequest.entity, {}, APIRequest, APIRequest.dataObject[i]));
+    constructor() {
+        super();
+        this.APIRequest = null;
+        this.entity     = null;
+    }
+
+    // ─── Legacy helper methods (retained from old defaultEntityHandler.js) ────
+    //
+    // These helpers are kept for backward compat with domain handlers that call
+    // them directly, and for use inside the class itself.
+    // They do NOT call any DB APIs — they are pure data-mapping utilities.
+
+    /**
+     * Maps DB rows back to JSON shape using the entity field relational_mapping.
+     * Equivalent of iterateFieldsAndGetResult from the old implementation.
+     *
+     * Sets APIRequest.result directly (same pattern as old getCallback / getListCallback).
+     */
+    convertTOJSON(apiRequest) {
+        if (apiRequest.dataObject instanceof Array) {
+            apiRequest.result = [];
+            for (let i = 0; i < apiRequest.dataObject.length; i++) {
+                apiRequest.result.push(
+                    this._iterateFieldsAndGetResult(apiRequest.entity, {}, apiRequest, apiRequest.dataObject[i])
+                );
             }
         } else {
-            APIRequest.result = iterateFieldsAndGetResult(APIRequest.entity, {}, APIRequest);
+            apiRequest.result = this._iterateFieldsAndGetResult(apiRequest.entity, {}, apiRequest);
         }
     }
 
-    this.getInputValuesFromInputData = function (qb) {
-        var raw_form_data = this.APIRequest.inputData.getEntityData() || {};
-        var entityName = this.APIRequest.entity.getName();
-        var form_data = raw_form_data[entityName] || {};
-        
-        var key_value = {};
-        var fields = this.APIRequest.entity.getFields();
-        Object.keys(fields).forEach((field, index) => {
-            if (fields[field].isIdentifier) {
-                return;
-            }
-            if (form_data[fields[field].name] !== undefined && form_data[fields[field].name] !== null) {
-                key_value[getColumnNameFromRelationalMapping(fields[field].relationMapping)] = form_data[fields[field].name];
+    /**
+     * Extracts and maps form field values from inputData → DB column names.
+     * Skips identifier fields (auto-generated).
+     * Input shape: { "member": { "auth_account_id": 456, "status": "active" } }
+     */
+    getInputValuesFromInputData() {
+        const rawFormData  = this.APIRequest.inputData.getEntityData() || {};
+        const entityName   = this.APIRequest.entity.getName();
+        const formData     = rawFormData[entityName] || {};
+
+        const keyValue = {};
+        const fields   = this.APIRequest.entity.getFields();
+        Object.keys(fields).forEach(field => {
+            if (fields[field].isIdentifier) return;
+            const val = formData[fields[field].name];
+            if (val !== undefined && val !== null) {
+                keyValue[this._getColumnName(fields[field].relationMapping)] = val;
             }
         });
-        return key_value;
+        return keyValue;
     }
 
-    this.executeResult = function (APIRequest, err) {
-        var APIResult = {};
-        var result = APIRequest.result;
+    /**
+     * Wraps result in the standard response envelope.
+     * { response_status: {...}, [pluralName]: result }
+     * Same as old executeResult.
+     */
+    executeResult(apiRequest, err) {
+        const result = apiRequest.result;
         if (!err) {
-            // Apply standard envelope defined in knowledge base
-            APIResult["response_status"] = { status: 200, message: "Operation successful" };
-            APIResult[APIRequest.entity.pluralName || `${APIRequest.entity.getName()}s`] = result;
+            apiRequest.result = {
+                response_status: { status: 200, message: 'Operation successful' },
+                [apiRequest.entity.getPluralName()]: result
+            };
         } else {
-            APIResult["response_status"] = { status: 500, message: "Operation failed" };
-            APIResult["error"] = err;
-        }
-        APIRequest.result = APIResult;
-    }
-
-    this.getSelectQueryWithoutSelectColumns = function () {
-        var IdentifierField = this.entity.getIdentifierField();
-        this.queryBuilder.addFromTableInQuery({ query: this.APIRequest.queryObject, table: this.entity.getTableName() });
-        this.joinAllTablesOfEntity();
-    }
-
-    this.addTableAndCriteriaBasedOnNavigationInfo = function () {
-        this.navigationInfo = this.APIRequest.navigationInfo;
-        if (this.navigationInfo) {
-            var refField = this.navigationInfo.getRefField();
-            if (!refField.isAllowedValuesField()) {
-                var parentEntity = this.navigationInfo.getParentEntity();
-                this.queryBuilder.join(Object.assign(applyParentCriteria(this.entity, parentEntity, null, parentEntity.getId()), { query: this.APIRequest.queryObject }));
-            }
+            apiRequest.result = {
+                response_status: { status: 500, message: 'Operation failed' },
+                error: err
+            };
         }
     }
 
-    this.addEntityIntoQuery = function (options) {
-        var entity = (options && options.entity) ? options.entity : this.entity;
-        if (!(options && options.isFromNavigationInfo)) {
-            this.queryBuilder.addFromTableInQuery({ query: this.APIRequest.queryObject, table: entity.getTableName() });
-        }
-        var IdentifierField = entity.getIdentifierField();
-        var tableName = IdentifierField.getTableName();
-        var columnName = IdentifierField.getColumnName();
-        var criteria = {};
-        if (entity.getId()) {
-            criteria[tableName + '.' + columnName] = entity.getId();
-        }
-        this.joinAllTablesOfEntity({ entity: entity });
-        if (Object.keys(criteria).length) {
-            // this.APIRequest.queryObject.where(criteria);
-            this.queryBuilder.setCriteria({ query: this.APIRequest.queryObject, criteria: criteria });
-        }
+    // ─── Private helpers ─────────────────────────────────────────────────────
+
+    /**
+     * Extracts column name from relational_mapping string ("table.column" → "column").
+     */
+    _getColumnName(relationMapping) {
+        if (!relationMapping) return null;
+        return relationMapping.split('.')[1];
     }
 
-    this.addEntityIdCriteriaIntoQuery = function (options) {
-        var criteria = getEntityIdCriteria(this.entity, this.entity.getId());
-        if (criteria != null) {
-            this.queryBuilder.setCriteria({ query: this.APIRequest.queryObject, criteria: criteria });
-        }
-    }
-
-    this.joinAllTablesOfEntity = function (options) {
-        var joinCriteria = null;
-        var entity = (options && options.entity) ? options.entity : this.entity;
-        Object.keys(entity.tablesForGetOperation).forEach((element, index) => {
-            joinCriteria = entity.tablesForGetOperation[element];
-            if (joinCriteria) {
-                this.APIRequest.queryObject.join(element, joinCriteria);
-                joinCriteria = null;
+    /**
+     * Recursively walks entity fields and maps DB column values back to JSON field names.
+     * Handles reference entity expansion (refEntity fields).
+     * Equivalent of old iterateFieldsAndGetResult module-level function.
+     */
+    _iterateFieldsAndGetResult(entity, entityResult, apiRequest, dataObject) {
+        const fields = entity.getFields();
+        Object.keys(fields).forEach(field => {
+            if (fields[field].refEntity) {
+                entityResult[fields[field].refEntity] = this._iterateFieldsAndGetResult(
+                    Entity.getEntityByName(fields[field].refEntity),
+                    {},
+                    apiRequest,
+                    dataObject
+                );
+            } else {
+                entityResult[fields[field].name] = this._getValueFromRelationMapping(
+                    dataObject || apiRequest.dataObject,
+                    fields[field].relationMapping
+                );
             }
         });
+        return entityResult;
     }
 
-    this.getCallback = function (results) {
-        if (!results) {
-            this.executeResult(this.APIRequest, "Database error or empty results");
-            return this.APIRequest.response.status(500).send(this.APIRequest.result);
+    /**
+     * Reads a value from a DB row using relational_mapping ("table.column").
+     * DB rows from nestTables queries come back as { table: { column: value } }.
+     * Plain query results come back as flat { column: value }.
+     * We handle both shapes.
+     */
+    _getValueFromRelationMapping(dataObject, mapping) {
+        if (!mapping || !dataObject) return undefined;
+        const parts = mapping.split('.');
+        // Nested shape: dataObject[table][column]
+        if (parts.length === 2 && dataObject[parts[0]] !== undefined) {
+            return dataObject[parts[0]][parts[1]];
         }
-        this.APIRequest.dataObject = results;
-        this.convertTOJSON(this.APIRequest);
-        this.executeResult(this.APIRequest);
-        this.APIRequest.response.send(this.APIRequest.result);
-    }
-
-    this.getListCallback = function (result) {
-        if (!result || !result[0]) {
-            this.executeResult(this.APIRequest, "Database error or empty list results");
-            return this.APIRequest.response.status(500).send(this.APIRequest.result);
+        // Flat shape: dataObject[column]
+        if (parts.length === 2) {
+            return dataObject[parts[1]];
         }
-        this.APIRequest.dataObject = result[0];
-        this.convertTOJSON(this.APIRequest);
-        this.executeResult(this.APIRequest);
-        this.APIRequest.response.send(this.APIRequest.result);
-    }
-
-    this.getSelectQueryForEntityGet = function (options) {
-        this.addEntityIntoQuery();
-    }
-}
-
-var getValueFromRelationMapping = function (dataObject, mapping) {
-    var mappings = mapping.split('.');
-    return dataObject[mappings[0]][mappings[1]];
-}
-
-var getColumnNameFromRelationalMapping = function (mapping) {
-    return mapping.split('.')[1];
-}
-
-var getTablename = function (request) {
-    return request.entity.getTableName();
-}
-
-var applyParentCriteria = function (currentEntity, referrringEntity, currentEntityId, referrringEntityId) {
-    var parentTable = referrringEntity.getIdentifierField().getTableName();
-    var parentField = referrringEntity.getFieldByName(currentEntity.getName() + "s");
-    var criteria = {};
-    if (referrringEntityId) {
-        var referringEntityIdentifierColumnName = referrringEntity.getIdentifierField().getColumnName();
-        criteria.criteria = {};
-        criteria.criteria[referringEntityIdentifierColumnName] = referrringEntityId;
-    }
-    return Object.assign({ table: parentTable, joinCriteria: parentField.foreignKeyMapping }, criteria);
-}
-
-var getEntityIdCriteria = function (entity, entityId) {
-    var criteria = null;
-    if (entityId) {
-        criteria = {};
-        criteria[getColumnNameFromRelationalMapping(entity.getIdentifierField().relationMapping)] = entityId;
-    }
-    return criteria;
-}
-
-// used for post and put operation.
-var iterateFieldsAndGetResult = function (entity, entityResult, APIRequest, dataObject) {
-    var fields = entity.getFields();
-    Object.keys(fields).forEach((field) => {
-        if (fields[field].refEntity) {
-            entityResult[fields[field].refEntity] = iterateFieldsAndGetResult(Entity.getEntityByName(fields[field].refEntity), {}, APIRequest, dataObject);
-        } else {
-            entityResult[fields[field].name] = getValueFromRelationMapping((dataObject) ? dataObject : APIRequest.dataObject, fields[field].relationMapping);
-        }
-    });
-    return entityResult;
-}
-
-DefaultEntityHandler.prototype.get = function () {
-    SQLConnect.runBuilder((qb) => {
-        this.APIRequest.queryObject = qb;
-        this.getSelectQueryForEntityGet();
-        this.queryBuilder.queryGet(this.APIRequest.queryObject, this.APIRequest, (result) => {
-            this.getCallback(result);
-        });
-    });
-}
-
-DefaultEntityHandler.prototype.getList = function () {
-    SQLConnect.runBuilder((qb) => {
-        this.APIRequest.queryObject = qb;
-        this.getSelectQueryWithoutSelectColumns();
-        this.addTableAndCriteriaBasedOnNavigationInfo();
-        this.queryBuilder.queryGet(this.APIRequest.queryObject, this.APIRequest, (result) => {
-            this.getCallback(result);
-        });
-    });
-}
-const DefaultEntityValidator = require('../Validation/DefaultEntityValidator');
-const ListenerDispatcher = require('../Listener/ListenerDispatcher');
-const SequenceGenerator = require('../Database/SequenceGenerator');
-
-DefaultEntityHandler.prototype.post = async function () {
-    try {
-        await DefaultEntityValidator.validatePipeline(this.APIRequest);
-        await ListenerDispatcher.dispatch('beforeCreate', this.APIRequest.entity, this.APIRequest.inputData, this.APIRequest.context.request);
-
-        const tenantId = this.APIRequest.context.request.$credentials ? this.APIRequest.context.request.$credentials.tenantId : 'default_tenant';
-        const tableName = getTablename(this.APIRequest);
-
-        // Automatically inject Sequence Generator Mapping natively
-        const generatedId = await SequenceGenerator.getNextId(tenantId, `${tableName}.id`);
-        const insertData = this.getInputValuesFromInputData();
-        insertData.id = generatedId; // Impose Algorithm assignment over default database bounds!
-
-        SQLConnect.runBuilder(async qb => {
-            try {
-                await this.queryBuilder.queryInsert(qb, { table: tableName, data: insertData }, this.APIRequest);
-                this.APIRequest.entityId = generatedId;
-                this.get(this.APIRequest);
-                await ListenerDispatcher.dispatch('afterCreate', this.APIRequest.entity, this.APIRequest.result, this.APIRequest.context.request);
-            } catch (err) {
-                this.APIRequest.response.status(400).json({ error: err.message });
-            } finally {
-                qb.release();
-            }
-        });
-    } catch (err) {
-        this.APIRequest.response.status(400).json({ error: err.message });
-    }
-}
-
-DefaultEntityHandler.prototype.delete = function () {
-    SQLConnect.runBuilder(async qb => {
-        try {
-            this.APIRequest.queryObject = qb;
-            var results = {};
-            if (this.APIRequest.entityId) {
-                this.addEntityIdCriteriaIntoQuery();
-                results = await this.queryBuilder.queryDelete(qb, { table: this.APIRequest.entity.getTableName() }, this.APIRequest);
-            }
-            this.APIRequest.result = results;
-            this.executeResult(this.APIRequest);
-            this.APIRequest.response.send(this.APIRequest.result);
-        } catch (err) {
-            this.APIRequest.response.status(400).json({ error: err.message });
-        } finally {
-            qb.release();
-        }
-    });
-}
-
-DefaultEntityHandler.prototype.update = async function () {
-    try {
-        await DefaultEntityValidator.validatePipeline(this.APIRequest);
-        await ListenerDispatcher.dispatch('beforeUpdate', this.APIRequest.entity, this.APIRequest.inputData, this.APIRequest.context.request);
-
-        SQLConnect.runBuilder((qb) => {
-            this.APIRequest.queryObject = qb;
-            this.queryBuilder.queryUpdate(qb, { table: getTablename(this.APIRequest), data: this.getInputValuesFromInputData(), criteria: { id: this.APIRequest.entityId } }, this.APIRequest, async (err, res) => {
-                try {
-                    if (err) throw err;
-                    if (res && res.affectedRows) {
-                        this.get(this.APIRequest);
-                        await ListenerDispatcher.dispatch('afterUpdate', this.APIRequest.entity, this.APIRequest.result, this.APIRequest.context.request);
-                    } else {
-                        this.APIRequest.response.status(400).json({ response_status: { status: 400, message: "No rows edited" } });
-                    }
-                } catch (e) {
-                    this.APIRequest.response.status(400).json({ error: e.message });
-                } finally {
-                    qb.release();
-                }
-            });
-        });
-    } catch (err) {
-        this.APIRequest.response.status(400).json({ error: err.message });
-    }
-}
-
-async function getEntityFromId(qb, results, request) {
-    var values = {};
-    values[getIdentifierColumnForEntity(request)] = results.insert_id;
-    results = await qb.get_where(getTablename(request), values);
-    return results;
-}
-
-DefaultEntityHandler.prototype.handleAPICall = async function (APIRequest) {
-    this.APIRequest = APIRequest;
-    this.entity = APIRequest.entity;
-
-    var method = APIRequest.operation;
-    if (method == 'GET') {
-        if (APIRequest.entityId == null) {
-            this.getList();
-        } else {
-            this.get();
-        }
-    }
-    else if (method == 'PUT') {
-        this.update();
-    }
-    else if (method == 'POST') {
-        this.post();
-    }
-    else if (method == 'DELETE') {
-        this.delete();
+        return dataObject[mapping];
     }
 }
 

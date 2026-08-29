@@ -152,14 +152,19 @@ class XMLSecurityMiddleware {
         }
 
         // --- Layer 2: Role Check ---
-        const userRoles = req.$credentials ? req.$credentials.roles : ['Guest'];
-        const hasRole = userRoles.some(role => matchedRoute.roles.includes(role));
+        // Only enforced when the matched <url> declares roles="..." in security-api.xml.
+        // If no roles are declared the route is considered open to any authenticated user
+        // (authentication is already guaranteed by SecurityGatewayFilter upstream).
+        if (matchedRoute.roles.length > 0) {
+            const userRoles = req.$credentials ? req.$credentials.roles : [];
+            const hasRole = userRoles.some(role => matchedRoute.roles.includes(role));
 
-        if (!hasRole) {
-            console.warn(`[XMLSecurity] Role Blocked - Required [${matchedRoute.roles}], Had [${userRoles}]: ${method} ${reqPath}`);
-            return res.status(403).json({
-                response_status: { status_code: 4003, status: 'failed', message: 'Access Denied: Insufficient permissions' }
-            });
+            if (!hasRole) {
+                console.warn(`[XMLSecurity] Role Blocked - Required [${matchedRoute.roles}], Had [${userRoles}]: ${method} ${reqPath}`);
+                return res.status(403).json({
+                    response_status: { status_code: 4003, status: 'failed', message: 'Access Denied: Insufficient permissions' }
+                });
+            }
         }
 
         // --- Layer 3: input_data Template Validation ---

@@ -1,40 +1,187 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Security API — URL Whitelist + Role + Template Binding
+  Architecture reference: architecture-knowledge-base.md §6, §7, §8
+
+  URL structure for org-scoped product routes:
+    /org/:orgHandle/api/v1/:resource
+    /org/:orgHandle/api/v1/:resource/:id
+
+  Roles on org-scoped routes are checked by RBACMiddleware (permission-based).
+  The XMLSecurityMiddleware verifies the URL is whitelisted and validates input_data templates.
+
+  Framework-level routes (no org prefix, no XMLSecurity check):
+    POST /auth/signup       → registered before SecurityGatewayFilter (public)
+    POST /auth/login        → registered before SecurityGatewayFilter (public)
+    POST /auth/refresh      → registered before SecurityGatewayFilter (public)
+    POST /auth/logout       → registered after SecurityGatewayFilter (auth only)
+    POST /api/v1/orgs       → registered after SecurityGatewayFilter (auth only)
+  These are handled directly in main.js — NOT through this XML.
+
+  Role values here map to role.name values seeded at org creation:
+    OrgAdmin, ModuleConfig, Member
+  Additional custom roles may be created per-org by org admins.
+-->
 <security>
-	<!-- User Endpoints -->
-	<url path="/api/v1/users" method="POST" csrf="true" operation-type="CREATE" roles="CreateRequests">
-		<param name="input_data" template="user_api_template" max-len="1" max-occurence="1" />
-	</url>
-	<url path="/api/v1/users" method="GET" csrf="true" operation-type="READ" roles="ReadRequests">
-	</url>
-	<url path="/api/v1/users" method="PUT" csrf="true" operation-type="UPDATE" roles="UpdateRequests">
-		<param name="input_data" template="user_api_template" max-len="1" max-occurence="1" />
-	</url>
-	<url path="/api/v1/users" method="DELETE" csrf="true" operation-type="DELETE" roles="DeleteRequests">
-	</url>
 
-    <url path="/api/v1/users/:id" method="GET" csrf="true" operation-type="READ" roles="Admin,User" />
-    <url path="/api/v1/users/:id" method="PUT" csrf="true" operation-type="UPDATE" roles="Admin,User" />
-    <url path="/api/v1/users/:id" method="DELETE" csrf="true" operation-type="DELETE" roles="Admin" />
-    
-    <url path="/api/v1/users/_metainfo" method="GET" roles="Admin,User" />
-    <url path="/api/v1/users/_links" method="GET" roles="Admin,User" />
-    <url path="/api/v1/users/:id/_activate" method="POST" roles="Admin" />
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Org Members (User Management)
+         All member endpoints are restricted to OrgAdmin only.
+         OrgAdmin is the platform-level super-admin role that transcends org-level
+         OrgAdmin — used for platform operators managing user membership on behalf
+         of an org (support tooling, onboarding, etc.).
+         ═══════════════════════════════════════════════════════════════════════ -->
 
-	<!-- Tenancy Onboarding Operations -->
-	<url path="/api/v1/tenants" method="POST" csrf="true" operation-type="CREATE" roles="CreateRequests,SystemUser">
-		<param name="input_data" template="tenant_api_template" max-len="1" max-occurence="1" />
-	</url>
-	<url path="/api/v1/tenants" method="GET" csrf="true" operation-type="READ" roles="ReadRequests,SystemUser">
-	</url>
-	<url path="/api/v1/tenants" method="PUT" csrf="true" operation-type="UPDATE" roles="UpdateRequests,SystemUser">
-		<param name="input_data" template="tenant_api_template" max-len="1" max-occurence="1" />
-	</url>
-	<url path="/api/v1/tenants" method="DELETE" csrf="true" operation-type="DELETE" roles="DeleteRequests,SystemUser">
-	</url>
+    <!-- List all members in the org — OrgAdmin only -->
+    <url path="/org/:orgHandle/api/v1/members" method="GET"
+         roles="OrgAdmin">
+    </url>
 
-    <url path="/api/v1/tenants/:id" method="GET" roles="Admin,User" />
-    <url path="/api/v1/tenants/:id" method="PUT" roles="Admin,User" />
-    <url path="/api/v1/tenants/:id" method="DELETE" roles="Admin" />
-    <url path="/api/v1/tenants/_metainfo" method="GET" roles="Admin,User" />
-    <url path="/api/v1/tenants/_links" method="GET" roles="Admin,User" />
+    <!-- Import a new member — OrgAdmin only -->
+    <url path="/org/:orgHandle/api/v1/members" method="POST"
+         roles="OrgAdmin">
+        <param name="input_data" template="member_add_template" />
+    </url>
+
+    <!-- Get a specific member — OrgAdmin only -->
+    <url path="/org/:orgHandle/api/v1/members/:id" method="GET"
+         roles="OrgAdmin">
+    </url>
+
+    <!-- Update member status (suspend/restore) — OrgAdmin only -->
+    <url path="/org/:orgHandle/api/v1/members/:id" method="PUT"
+         roles="OrgAdmin">
+        <param name="input_data" template="member_edit_template" />
+    </url>
+
+    <!-- Remove a member from the org — OrgAdmin only -->
+    <url path="/org/:orgHandle/api/v1/members/:id" method="DELETE"
+         roles="OrgAdmin">
+    </url>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Roles
+         ═══════════════════════════════════════════════════════════════════════ -->
+
+    <!-- List all roles in the org -->
+    <url path="/org/:orgHandle/api/v1/roles" method="GET"
+         roles="OrgAdmin">
+    </url>
+
+    <!-- Create a custom role -->
+    <url path="/org/:orgHandle/api/v1/roles" method="POST"
+         roles="OrgAdmin">
+        <param name="input_data" template="role_create_template" />
+    </url>
+
+    <!-- Get a specific role -->
+    <url path="/org/:orgHandle/api/v1/roles/:id" method="GET"
+         roles="OrgAdmin">
+    </url>
+
+    <!-- Update a role's name/description (system roles cannot be deleted, but can be read) -->
+    <url path="/org/:orgHandle/api/v1/roles/:id" method="PUT"
+         roles="OrgAdmin">
+        <param name="input_data" template="role_edit_template" />
+    </url>
+
+    <!-- Delete a custom role (system roles are protected at handler level) -->
+    <url path="/org/:orgHandle/api/v1/roles/:id" method="DELETE"
+         roles="OrgAdmin">
+    </url>
+
+    <!-- Assign role to member — OrgAdmin only -->
+    <url path="/org/:orgHandle/api/v1/members/:id/roles" method="POST"
+         roles="OrgAdmin">
+        <param name="input_data" template="member_role_assign_template" />
+    </url>
+
+    <!-- Remove role from member — OrgAdmin only -->
+    <url path="/org/:orgHandle/api/v1/members/:id/roles/:roleId" method="DELETE"
+         roles="OrgAdmin">
+    </url>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Custom Modules — Module Definitions
+         ═══════════════════════════════════════════════════════════════════════ -->
+
+    <!-- List all custom modules in the org -->
+    <url path="/org/:orgHandle/api/v1/modules" method="GET"
+         roles="OrgAdmin,ModuleConfig,Member">
+    </url>
+
+    <!-- Create a new custom module -->
+    <url path="/org/:orgHandle/api/v1/modules" method="POST"
+         roles="OrgAdmin,ModuleConfig">
+        <param name="input_data" template="module_create_template" />
+    </url>
+
+    <!-- Get a specific module definition -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle" method="GET"
+         roles="OrgAdmin,ModuleConfig,Member">
+    </url>
+
+    <!-- Update module (name, description, status) -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle" method="PUT"
+         roles="OrgAdmin,ModuleConfig">
+        <param name="input_data" template="module_edit_template" />
+    </url>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Custom Module Fields
+         ═══════════════════════════════════════════════════════════════════════ -->
+
+    <!-- List fields for a module -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle/fields" method="GET"
+         roles="OrgAdmin,ModuleConfig,Member">
+    </url>
+
+    <!-- Add a field to a module -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle/fields" method="POST"
+         roles="OrgAdmin,ModuleConfig">
+        <param name="input_data" template="module_field_create_template" />
+    </url>
+
+    <!-- Update a field definition -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle/fields/:fieldId" method="PUT"
+         roles="OrgAdmin,ModuleConfig">
+        <param name="input_data" template="module_field_edit_template" />
+    </url>
+
+    <!-- Delete a field -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle/fields/:fieldId" method="DELETE"
+         roles="OrgAdmin,ModuleConfig">
+    </url>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Custom Module Records (EAV data operations)
+         ═══════════════════════════════════════════════════════════════════════ -->
+
+    <!-- List records in a module -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle/records" method="GET"
+         roles="OrgAdmin,ModuleConfig,Member">
+    </url>
+
+    <!-- Create a new record in a module -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle/records" method="POST"
+         roles="OrgAdmin,ModuleConfig,Member">
+        <param name="input_data" template="module_record_add_template" />
+    </url>
+
+    <!-- Get a specific record -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle/records/:recordId" method="GET"
+         roles="OrgAdmin,ModuleConfig,Member">
+    </url>
+
+    <!-- Update a record's field values -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle/records/:recordId" method="PUT"
+         roles="OrgAdmin,ModuleConfig,Member">
+        <param name="input_data" template="module_record_edit_template" />
+    </url>
+
+    <!-- Delete a record -->
+    <url path="/org/:orgHandle/api/v1/modules/:moduleHandle/records/:recordId" method="DELETE"
+         roles="OrgAdmin,ModuleConfig">
+    </url>
+
 </security>

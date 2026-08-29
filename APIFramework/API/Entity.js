@@ -1,19 +1,52 @@
 var Field = require('./EntityField');
 
 function Entity(entityJSON) {
-    this.id = null;
-    this.tableName = entityJSON.table_name;
-    this.name = entityJSON.name;
-    this.handlers = entityJSON.handlers;
-    this.fields = {};
+    this.id         = null;
+    this.tableName  = entityJSON.table_name;
+    this.name       = entityJSON.name;
+    this.pluralName = entityJSON.pluralName  || null;
+    this.path       = entityJSON.path        || null;
+    this.handlers   = entityJSON.handlers;
+    this.validator  = entityJSON.validator   || null;
+    this.listeners  = entityJSON.listeners   || [];
+    this.operations = entityJSON.operations  || [];
+    this.fields     = {};
     this.tablesForGetOperation = [];
 
     this.getName = function () {
         return this.name;
     }
 
+    this.getPluralName = function () {
+        return this.pluralName || (this.name + 's');
+    }
+
+    this.getPath = function () {
+        return this.path;
+    }
+
     this.getTableName = function () {
         return this.tableName;
+    }
+
+    this.getValidator = function () {
+        return this.validator;
+    }
+
+    this.getListeners = function () {
+        return this.listeners;
+    }
+
+    this.getOperations = function () {
+        return this.operations;
+    }
+
+    /**
+     * Returns the operation config object for a given operation name,
+     * e.g. getOperation('add') → { name:'add', method:'post', ... }
+     */
+    this.getOperation = function (operationName) {
+        return this.operations.find(op => op.name === operationName) || null;
     }
 
     this.setId = function (id) {
@@ -40,8 +73,8 @@ function Entity(entityJSON) {
 
     this.getHandlerInstance = function () {
         if (!this.handlers) {
-            // No domain-specific handler found — use the framework default
-            this.handlers = require('../Handler/PreDefaultEntityHandler');
+            // No handler resolved by EntityMetaDataHolder — use framework default
+            this.handlers = require('../Handler/DefaultEntityHandler');
         }
         const handler = this.handlers;
         return new handler();
@@ -53,7 +86,7 @@ function Entity(entityJSON) {
 
     this.getRefEntityFields = function () {
         var refFields = [];
-        this.fields.forEach(field => {
+        Object.values(this.fields).forEach(field => {
             if (field.refFields) {
                 refFields.push(field);
             }
@@ -82,13 +115,10 @@ module.exports = Entity;
 
 module.exports.getEntityByPath = function (path) {
     var entityMetaData = require('./EntityMetaDataHolder');
-    if (path.indexOf('/') == -1) {
-        path = '/' + path;
-    }
-    return entityMetaData.get(path);
+    return entityMetaData.getByPath(path);
 }
 
 module.exports.getEntityByName = function (name) {
     const entityMetaData = require('./EntityMetaDataHolder');
-    return entityMetaData.get('/' + name + 's');
+    return entityMetaData.get(name);
 }

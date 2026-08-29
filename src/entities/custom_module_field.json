@@ -1,0 +1,103 @@
+{
+  "entityName": "custom_module_field",
+  "pluralName": "fields",
+  "path": "/fields",
+  "tableName": "custom_module_fields",
+  "handler": "DefaultEntityHandler",
+  "validator": "DefaultEntityValidator",
+  "listeners": [],
+  "fields": [
+    {
+      "name": "field_id",
+      "relational_mapping": "custom_module_fields.field_id",
+      "is_identifier": true,
+      "nullable": false
+    },
+    {
+      "name": "module_id",
+      "relational_mapping": "custom_module_fields.module_id",
+      "nullable": false
+    },
+    {
+      "name": "field_name",
+      "relational_mapping": "custom_module_fields.field_name",
+      "nullable": false
+    },
+    {
+      "name": "field_label",
+      "relational_mapping": "custom_module_fields.field_label",
+      "nullable": false
+    },
+    {
+      "name": "field_type",
+      "relational_mapping": "custom_module_fields.field_type",
+      "nullable": false
+    },
+    {
+      "name": "is_required",
+      "relational_mapping": "custom_module_fields.is_required",
+      "nullable": false
+    },
+    {
+      "name": "is_unique",
+      "relational_mapping": "custom_module_fields.is_unique",
+      "nullable": false
+    },
+    {
+      "name": "default_value",
+      "relational_mapping": "custom_module_fields.default_value",
+      "nullable": true
+    },
+    {
+      "name": "field_order",
+      "relational_mapping": "custom_module_fields.field_order",
+      "nullable": false
+    },
+    {
+      "name": "config_json",
+      "relational_mapping": "custom_module_fields.config_json",
+      "nullable": true
+    },
+    {
+      "name": "status",
+      "relational_mapping": "custom_module_fields.status",
+      "nullable": false
+    },
+    {
+      "name": "created_at",
+      "relational_mapping": "custom_module_fields.created_at",
+      "nullable": false,
+      "internal": false
+    }
+  ],
+  "operations": [
+    {
+      "name": "get_list",
+      "method": "get",
+      "without_id": true,
+      "roles": ["OrgAdmin", "ModuleConfig", "Member"],
+      "description": "List all fields for a module"
+    },
+    {
+      "name": "add",
+      "method": "post",
+      "without_id": true,
+      "roles": ["OrgAdmin", "ModuleConfig"],
+      "description": "Add a new field definition to a module"
+    },
+    {
+      "name": "edit",
+      "method": "put",
+      "without_id": false,
+      "roles": ["OrgAdmin", "ModuleConfig"],
+      "description": "Update a field definition (label, required, default, order, config)"
+    },
+    {
+      "name": "delete",
+      "method": "delete",
+      "without_id": false,
+      "roles": ["OrgAdmin", "ModuleConfig"],
+      "description": "Deactivate/remove a field from a module"
+    }
+  ]
+}
