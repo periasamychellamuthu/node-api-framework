@@ -3,36 +3,32 @@
 const AbstractEntityHandler  = require('./AbstractEntityHandler');
 const DefaultEntityValidator = require('../Validation/DefaultEntityValidator');
 const dataAccess             = require('../Database/ORM/DataAccess');
-const SequenceGenerator      = require('../Database/SequenceGenerator');
 const JSONDOConverter        = require('../Transformer/JSONDOConverter');
 const ResponseTransformer    = require('../Transformer/ResponseTransformer');
 const ListenerDispatcher     = require('../Listener/ListenerDispatcher');
+const RequestContext          = require('../Context/RequestContext');
 const { SelectQueryImpl, Criteria, Column, Table, Range, SortColumn } = require('../Database/QueryBuilder');
 
 class PreDefaultEntityHandler extends AbstractEntityHandler {
     constructor() { super(); }
 
-    _pkColumn(entity) {
-        const idField = entity.getIdentifierField();
-        return idField ? idField.getColumnName() : 'id';
-    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * Derives explicit SELECT columns from the entity's field definitions.
      * Only fields that map to a real DB column in the entity's primary table
      * are included (collection fields are skipped).
-     * Returns an array of Column instances to be added to a SelectQueryImpl.
      */
     _buildSelectColumns(entity) {
         const tableName = entity.getTableName();
         const columns   = [];
         for (const field of Object.values(entity.getFields())) {
-            if (field.isCollection) continue;                     // no DB column
-            if (!field.relationMapping) continue;                 // guard
+            if (field.isCollection) continue;
+            if (!field.relationMapping) continue;
             const fieldTable  = field.getTableName();
             const fieldColumn = field.getColumnName();
-            // Only select columns that belong to this entity's primary table.
-            // Joined-table fields (FK expansion) are resolved separately.
             if (fieldTable === tableName) {
                 columns.push(Column.getColumn(tableName, fieldColumn));
             }
@@ -40,19 +36,27 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
         return columns;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // CRUD operations
+    //
+    // Range scoping is handled automatically by DataAccess.get() / getOne().
+    // RequestContext (ALS) carries rangeStart/rangeEnd for the current request.
+    // No manual Criteria.between() calls are needed here.
+    //
+    // PK generation is handled automatically by Row.get(pkColumn):
+    //   - For org-scoped PKs (<uniquevalue-generation> declared in DD XML),
+    //     Row.get() calls SequenceGenerator.getNextIdSync(orgId) and returns
+    //     a real ID immediately.
+    //   - No manual SequenceGenerator.getNextId() calls in handlers.
+    // ─────────────────────────────────────────────────────────────────────────
+
     async getList(request) {
         const entity    = request.entity;
         const tableName = entity.getTableName();
-        const req       = request.context.request;
-        const pkColumn  = this._pkColumn(entity);
 
+        // Build query — no range criteria needed, DataAccess.get() injects it
         const sq = new SelectQueryImpl(Table.getTable(tableName));
         sq.addSelectColumns(this._buildSelectColumns(entity));
-        if (req.rangeStart && req.rangeEnd) {
-            sq.setCriteria(
-                Criteria.between(Column.getColumn(tableName, pkColumn), req.rangeStart, req.rangeEnd)
-            );
-        }
 
         const rows     = await dataAccess.get(sq);
         const jsonRows = await Promise.all(
@@ -68,8 +72,7 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
         const entity    = request.entity;
         const tableName = entity.getTableName();
         const entityId  = request.entityId;
-        const req       = request.context.request;
-        const pkColumn  = this._pkColumn(entity);
+        const pkColumn  = entity.getIdentifierField().getColumnName();
 
         if (!entityId) {
             return request.response.status(400).json({
@@ -77,15 +80,10 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
             });
         }
 
+        // Set the specific ID criteria — DataAccess.getOne() will AND the range on top
         const sq = new SelectQueryImpl(Table.getTable(tableName));
         sq.addSelectColumns(this._buildSelectColumns(entity));
-        let criteria = Criteria.eq(Column.getColumn(tableName, pkColumn), entityId);
-        if (req.rangeStart && req.rangeEnd) {
-            criteria = criteria.and(
-                Criteria.between(Column.getColumn(tableName, pkColumn), req.rangeStart, req.rangeEnd)
-            );
-        }
-        sq.setCriteria(criteria);
+        sq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));
 
         const row = await dataAccess.getOne(sq);
 
@@ -105,29 +103,26 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
         const entity    = request.entity;
         const tableName = entity.getTableName();
         const req       = request.context.request;
-        const pkColumn  = this._pkColumn(entity);
+        const pkColumn  = entity.getIdentifierField().getColumnName();
 
         await DefaultEntityValidator.validatePipeline(request);
         await ListenerDispatcher.dispatch('beforeCreate', entity, request.inputData, req);
 
         const plainObj = await JSONDOConverter.transformJSONToEntity(request);
 
-        const orgId = req.orgId;
-        if (!orgId) {
-            return request.response.status(403).json({
-                response_status: { status: 'failed', message: 'No active org context. This endpoint requires an org-scoped URL.' }
-            });
-        }
-
-        const insertId     = await SequenceGenerator.getNextId(orgId);
-        plainObj[pkColumn] = insertId;
-
         const dobj = dataAccess.constructDataObject();
         const row  = dataAccess.newRow(tableName);
         for (const [k, v] of Object.entries(plainObj)) row.set(k, v);
         dobj.addRow(row);
+
+        // PK is auto-generated by Row.get(pkColumn) the first time it is read.
+        // Trigger it now so we have the real ID for the post-INSERT fetch.
+        // Row.get() calls SequenceGenerator.getNextIdSync(orgId) via RequestContext.
+        const insertId = row.get(pkColumn);
+
         await dataAccess.add(dobj);
 
+        // Fetch back by exact PK — DataAccess.getOne() will AND the range automatically
         const fetchSq = new SelectQueryImpl(Table.getTable(tableName));
         fetchSq.addSelectColumns(this._buildSelectColumns(entity));
         fetchSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), insertId));
@@ -148,7 +143,7 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
         const tableName = entity.getTableName();
         const entityId  = request.entityId;
         const req       = request.context.request;
-        const pkColumn  = this._pkColumn(entity);
+        const pkColumn  = entity.getIdentifierField().getColumnName();
 
         await DefaultEntityValidator.validatePipeline(request);
         await ListenerDispatcher.dispatch('beforeUpdate', entity, request.inputData, req);
@@ -160,6 +155,8 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
             });
         }
 
+        // Fetch existing — DataAccess.getOne() auto-scopes by range, so a user
+        // from a different org that guesses this ID will get null → 404
         const fetchSq = new SelectQueryImpl(Table.getTable(tableName));
         fetchSq.addSelectColumns(this._buildSelectColumns(entity));
         fetchSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));
@@ -183,6 +180,7 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
         dobj.updateRow(existing);
         await dataAccess.update(dobj);
 
+        // Fetch updated row — range auto-scoped again
         const updatedSq = new SelectQueryImpl(Table.getTable(tableName));
         updatedSq.addSelectColumns(this._buildSelectColumns(entity));
         updatedSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));
@@ -203,7 +201,7 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
         const tableName = entity.getTableName();
         const entityId  = request.entityId;
         const req       = request.context.request;
-        const pkColumn  = this._pkColumn(entity);
+        const pkColumn  = entity.getIdentifierField().getColumnName();
 
         if (!entityId) {
             return request.response.status(400).json({
@@ -213,6 +211,7 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
 
         await ListenerDispatcher.dispatch('beforeDelete', entity, { id: entityId }, req);
 
+        // Fetch existing — range auto-scoped, cross-org delete attempt returns null → 404
         const fetchSq = new SelectQueryImpl(Table.getTable(tableName));
         fetchSq.addSelectColumns(this._buildSelectColumns(entity));
         fetchSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));

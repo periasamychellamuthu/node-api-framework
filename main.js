@@ -147,8 +147,9 @@ const DBConnectionPool     = require('./APIFramework/Database/DBConnectionPool')
 
     // ── Step 11: Authenticated Auth Routes ───────────────────────────────────
     //   These need an authenticated user but no org context (no OrgContextFilter needed).
+    const OrgCreationHandler = require('./APIFramework/Handler/OrgCreationHandler');
     app.post('/auth/logout',  AuthController.logout.bind(AuthController));
-    app.post('/api/v1/orgs',  AuthController.createOrg.bind(AuthController));
+    app.post('/api/v1/orgs',  OrgCreationHandler.createOrg.bind(OrgCreationHandler));
 
     // ── Step 12: Authenticated UI Pages ──────────────────────────────────────
     app.get('/',         (req, res) => res.sendFile(path.join(publicDir, 'home.html')));

@@ -1,6 +1,7 @@
 const TokenService  = require('./TokenService');
 const dataAccess    = require('../Database/ORM/DataAccess');
 const { SelectQueryImpl, Criteria, Column, Table } = require('../Database/QueryBuilder');
+const { fail }      = require('../Utils/ResponseUtil');
 
 class SecurityGatewayFilter {
 
@@ -21,9 +22,7 @@ class SecurityGatewayFilter {
             token = req.cookies.iam_adt;
         }
 
-        if (!token) {
-            return SecurityGatewayFilter._handleUnauthenticated(req, res, reqPath, 'No token provided');
-        }
+        if (!token) return SecurityGatewayFilter._handleUnauthenticated(req, res, reqPath, 'No token provided');
 
         let decoded;
         try {
@@ -41,22 +40,12 @@ class SecurityGatewayFilter {
         const isBlacklisted = await SecurityGatewayFilter._isBlacklisted(jti);
         if (isBlacklisted) {
             console.warn(`[SecurityGateway] Blacklisted token jti=${jti} — account ${authAccountId}`);
-            return res.status(401).json({
-                response_status: { status_code: 4001, status: 'failed', message: 'Token has been revoked. Please log in again.' }
-            });
+            return fail(res, 401, 4001, 'Token has been revoked. Please log in again.');
         }
 
         const accountStatus = await SecurityGatewayFilter._getAccountStatus(authAccountId);
-        if (!accountStatus) {
-            return res.status(401).json({
-                response_status: { status_code: 4001, status: 'failed', message: 'Account not found.' }
-            });
-        }
-        if (accountStatus !== 'active') {
-            return res.status(401).json({
-                response_status: { status_code: 4001, status: 'failed', message: `Account is ${accountStatus}.` }
-            });
-        }
+        if (!accountStatus) return fail(res, 401, 4001, 'Account not found.');
+        if (accountStatus !== 'active') return fail(res, 401, 4001, `Account is ${accountStatus}.`);
 
         req.authAccountId = authAccountId;
         console.log(`[SecurityGateway] Authenticated → auth_account_id=${authAccountId}`);
@@ -100,7 +89,8 @@ class SecurityGatewayFilter {
                 Criteria.eq(Column.getColumn('token_blacklist', 'jti'), jti)
                     .and(Criteria.gt(Column.getColumn('token_blacklist', 'expires_at'), new Date()))
             );
-            const row = await dataAccess.getOne(sq);
+            // getRaw — token_blacklist is a global IAM table, not range-scoped
+            const row = await dataAccess.getOneRaw(sq);
             if (row) {
                 SecurityGatewayFilter._blacklistCache.set(jti, Date.now() + 3_600_000);
                 return true;
@@ -122,7 +112,8 @@ class SecurityGatewayFilter {
             const sq = new SelectQueryImpl(Table.getTable('iam_auth_accounts'));
             sq.addSelectColumn(Column.getColumn('iam_auth_accounts', 'status'));
             sq.setCriteria(Criteria.eq(Column.getColumn('iam_auth_accounts', 'auth_account_id'), authAccountId));
-            const row = await dataAccess.getOne(sq);
+            // getRaw — iam_auth_accounts is a global IAM table, not range-scoped
+            const row = await dataAccess.getOneRaw(sq);
             if (!row) return null;
             SecurityGatewayFilter._accountStatusCache.set(authAccountId, { status: row.get('status'), cachedAt: Date.now() });
             return row.get('status');
@@ -133,12 +124,8 @@ class SecurityGatewayFilter {
     }
 
     static _handleUnauthenticated(req, res, reqPath, reason) {
-        if (SecurityGatewayFilter.UI_PATHS.includes(reqPath)) {
-            return res.redirect('/login');
-        }
-        return res.status(401).json({
-            response_status: { status_code: 4001, status: 'failed', message: `Invalid user. Please login. (${reason})` }
-        });
+        if (SecurityGatewayFilter.UI_PATHS.includes(reqPath)) return res.redirect('/login');
+        return fail(res, 401, 4001, `Invalid user. Please login. (${reason})`);
     }
 }
 

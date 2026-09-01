@@ -27,10 +27,19 @@ class SchemaBuilder {
             return;
         }
 
+        // ── Pass 1: CREATE TABLE (columns + PK only, NO foreign keys) ─────────
+        //
+        // FK constraints are intentionally excluded here. MySQL validates FK
+        // references at CREATE TABLE time — if the referenced table has not been
+        // created yet (because DD XML files are parsed in filesystem order, not
+        // dependency order), the statement fails with
+        //   "Failed to open the referenced table '<name>'".
+        //
+        // Solution: create all tables first, then add FKs in a separate pass
+        // (ALTER TABLE ... ADD CONSTRAINT) once every table exists.
         for (const table of tables) {
             const tableName = table.$.name;
 
-            // ── Columns ───────────────────────────────────────────────────────
             const colNodes = table.columns?.[0]?.column ?? [];
             const cols     = Array.isArray(colNodes) ? colNodes : [colNodes];
             const pkNode   = table['primary-key']?.[0]?.['primary-key-column']?.[0] ?? null;
@@ -38,9 +47,9 @@ class SchemaBuilder {
             const definitions = [];
 
             cols.forEach(col => {
-                const name    = col.$.name;
-                const rawType = col['data-type']?.[0] ?? 'VARCHAR';
-                const maxSize = col['max-size']?.[0]  ?? null;
+                const name          = col.$.name;
+                const rawType       = col['data-type']?.[0] ?? 'VARCHAR';
+                const maxSize       = col['max-size']?.[0]  ?? null;
                 const nullable      = col.nullable?.[0]          === 'true';
                 const unique        = col.unique?.[0]            === 'true';
                 const autoIncrement = col['auto-increment']?.[0] === 'true';
@@ -48,15 +57,15 @@ class SchemaBuilder {
 
                 let sqlType;
                 switch (rawType.toUpperCase()) {
-                    case 'BIGINT':                           sqlType = 'BIGINT';                              break;
-                    case 'VARCHAR': case 'CHAR':             sqlType = `VARCHAR(${maxSize || 255})`;          break;
-                    case 'INT': case 'INTEGER':              sqlType = 'INT';                                 break;
-                    case 'BOOLEAN':                          sqlType = 'TINYINT(1)';                          break;
-                    case 'TEXT': case 'SBLOB':               sqlType = 'TEXT';                                break;
-                    case 'DECIMAL':                          sqlType = `DECIMAL(${maxSize || '20,4'})`;       break;
-                    case 'DATETIME': case 'TIMESTAMP':       sqlType = 'DATETIME';                            break;
-                    case 'DATE':                             sqlType = 'DATE';                                break;
-                    case 'JSON':                             sqlType = 'JSON';                                break;
+                    case 'BIGINT':                           sqlType = 'BIGINT';                        break;
+                    case 'VARCHAR': case 'CHAR':             sqlType = `VARCHAR(${maxSize || 255})`;    break;
+                    case 'INT': case 'INTEGER':              sqlType = 'INT';                           break;
+                    case 'BOOLEAN':                          sqlType = 'TINYINT(1)';                    break;
+                    case 'TEXT': case 'SBLOB':               sqlType = 'TEXT';                          break;
+                    case 'DECIMAL':                          sqlType = `DECIMAL(${maxSize || '20,4'})`; break;
+                    case 'DATETIME': case 'TIMESTAMP':       sqlType = 'DATETIME';                      break;
+                    case 'DATE':                             sqlType = 'DATE';                          break;
+                    case 'JSON':                             sqlType = 'JSON';                          break;
                     default:                                 sqlType = rawType;
                 }
 
@@ -68,37 +77,21 @@ class SchemaBuilder {
                     const needsQuotes = ['VARCHAR', 'CHAR', 'TEXT'].includes(rawType.toUpperCase());
                     colDef += needsQuotes ? ` DEFAULT '${defaultVal}'` : ` DEFAULT ${defaultVal}`;
                 }
-
                 definitions.push(colDef);
             });
 
-            // ── Primary key ───────────────────────────────────────────────────
             if (pkNode) definitions.push(`  PRIMARY KEY (${pkNode})`);
-
-            // ── Foreign keys ──────────────────────────────────────────────────
-            const foreignKeys = DataDictionaryParser.getTableForeignKeys(tableName);
-            foreignKeys.forEach(fk => {
-                if (fk.name && fk.fkColumn && fk.refTable && fk.refColumn) {
-                    definitions.push(
-                        `  CONSTRAINT ${fk.name} FOREIGN KEY (${fk.fkColumn}) REFERENCES ${fk.refTable}(${fk.refColumn})`
-                    );
-                }
-            });
 
             const ddl = `CREATE TABLE IF NOT EXISTS ${tableName} (\n${definitions.join(',\n')}\n)`;
             try {
                 await SQLConnect.query(ddl);
-                const fkCount = foreignKeys.length;
-                console.log(`[SchemaBuilder] Ensured table: ${tableName}${fkCount ? ` (${fkCount} FK)` : ''}`);
+                console.log(`[SchemaBuilder] Ensured table: ${tableName}`);
             } catch (err) {
                 console.error(`[SchemaBuilder] Error on table ${tableName}: ${err.message}`);
                 console.error(`[SchemaBuilder] DDL:\n${ddl}`);
             }
 
-            // ── Secondary indexes ─────────────────────────────────────────────
-            // CREATE INDEX IF NOT EXISTS is MySQL 8.0.12+ only. For compatibility
-            // we omit IF NOT EXISTS and swallow the "Duplicate key name" error that
-            // MySQL throws when the index already exists.
+            // ── Secondary indexes (safe here — no cross-table deps) ───────────
             const indexes = DataDictionaryParser.getTableIndexes(tableName);
             for (const idx of indexes) {
                 const uniqueKw = idx.unique ? 'UNIQUE ' : '';
@@ -109,6 +102,32 @@ class SchemaBuilder {
                     // ER_DUP_KEYNAME (1061) — index already exists, safe to ignore
                     if (err.code !== 'ER_DUP_KEYNAME' && !err.message.includes('Duplicate key name')) {
                         console.error(`[SchemaBuilder] Index error on ${tableName}.${idx.name}: ${err.message}`);
+                    }
+                }
+            }
+        }
+
+        // ── Pass 2: ADD FOREIGN KEY constraints (all tables now exist) ────────
+        for (const table of tables) {
+            const tableName  = table.$.name;
+            const foreignKeys = DataDictionaryParser.getTableForeignKeys(tableName);
+            for (const fk of foreignKeys) {
+                if (!fk.name || !fk.fkColumn || !fk.refTable || !fk.refColumn) continue;
+                const alterDdl =
+                    `ALTER TABLE ${tableName} ` +
+                    `ADD CONSTRAINT ${fk.name} ` +
+                    `FOREIGN KEY (${fk.fkColumn}) REFERENCES ${fk.refTable}(${fk.refColumn})`;
+                try {
+                    await SQLConnect.query(alterDdl);
+                    console.log(`[SchemaBuilder] Added FK: ${fk.name} on ${tableName}`);
+                } catch (err) {
+                    // ER_DUP_KEYNAME (1061) / ER_FK_DUP_NAME (1826) — FK already exists, safe to ignore
+                    if (err.errno === 1061 || err.errno === 1826 ||
+                        err.message.includes('Duplicate key name') ||
+                        err.message.includes('already exists')) {
+                        // silently skip — FK was added in a previous boot
+                    } else {
+                        console.error(`[SchemaBuilder] FK error ${fk.name} on ${tableName}: ${err.message}`);
                     }
                 }
             }

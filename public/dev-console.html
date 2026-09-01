@@ -775,9 +775,14 @@
         return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
-    // ── Keyboard shortcut: Ctrl+Enter = Send ─────────────────────────────────
+    // ── Keyboard shortcut: Ctrl+Enter anywhere = Send ────────────────────────
     document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') sendRequest();
+    });
+
+    // ── Enter in URL box = Send ───────────────────────────────────────────────
+    document.getElementById('urlInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') sendRequest();
     });
 </script>
 </body>

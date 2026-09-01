@@ -1,4 +1,5 @@
 const TokenService = require('./TokenService');
+const { fail }     = require('../Utils/ResponseUtil');
 
 /**
  * IAMAuthMiddleware — Identity & Access Management layer.
@@ -57,9 +58,7 @@ class IAMAuthMiddleware {
             token = req.cookies.iam_adt;
         }
 
-        if (!token) {
-            return IAMAuthMiddleware._handleUnauthenticated(req, res, reqPath);
-        }
+        if (!token) return IAMAuthMiddleware._handleUnauthenticated(req, res, reqPath);
 
         // --- Token Verification ---
         let decoded;
@@ -99,18 +98,10 @@ class IAMAuthMiddleware {
      */
     static _handleUnauthenticated(req, res, reqPath) {
         // UI paths: redirect to login
-        if (IAMAuthMiddleware.UI_PATHS.includes(reqPath)) {
-            return res.redirect('/login');
-        }
+        if (IAMAuthMiddleware.UI_PATHS.includes(reqPath)) return res.redirect('/login');
 
         // API paths: return 401
-        return res.status(401).json({
-            response_status: {
-                status_code: 4001,
-                status: 'failed',
-                message: 'Invalid user. Please login.'
-            }
-        });
+        return fail(res, 401, 4001, 'Invalid user. Please login.');
     }
 }
 

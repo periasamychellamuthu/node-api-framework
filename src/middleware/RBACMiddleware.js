@@ -1,5 +1,7 @@
-const dataAccess = require('../../APIFramework/Database/ORM/DataAccess');
+const dataAccess     = require('../../APIFramework/Database/ORM/DataAccess');
+const RequestContext = require('../../APIFramework/Context/RequestContext');
 const { SelectQueryImpl, Criteria, Column, Table, Join } = require('../../APIFramework/Database/QueryBuilder');
+const { fail }       = require('../../APIFramework/Utils/ResponseUtil');
 
 class RBACMiddleware {
 
@@ -8,19 +10,16 @@ class RBACMiddleware {
 
     static enforce(resource, action) {
         return async (req, res, next) => {
-            if (!req.memberId) {
-                console.error('[RBACMiddleware] req.memberId is not set. OrgContextFilter must run before RBACMiddleware.');
-                return res.status(500).json({
-                    response_status: { status_code: 5000, status: 'failed', message: 'Server configuration error.' }
-                });
+            const memberId = RequestContext.getMemberId();
+            if (!memberId) {
+                console.error('[RBACMiddleware] RequestContext has no memberId. DefaultRouterHandler must wrap before RBACMiddleware.');
+                return fail(res, 500, 5000, 'Server configuration error.');
             }
 
-            const permKey  = `${resource}:${action}`;
-            const memberId = req.memberId;
-            const orgId    = req.orgId;
+            const permKey = `${resource}:${action}`;
 
             try {
-                const permissions = await RBACMiddleware._loadPermissions(memberId, orgId, req.rangeStart, req.rangeEnd);
+                const permissions = await RBACMiddleware._loadPermissions(memberId);
 
                 if (permissions.has(permKey)) {
                     console.log(`[RBACMiddleware] Granted: member=${memberId} → ${permKey}`);
@@ -29,31 +28,21 @@ class RBACMiddleware {
                 }
 
                 console.warn(`[RBACMiddleware] Denied: member=${memberId} missing permission '${permKey}'`);
-                return res.status(403).json({
-                    response_status: { status_code: 4003, status: 'failed', message: `Access denied. Missing permission: ${permKey}` }
-                });
+                return fail(res, 403, 4003, `Access denied. Missing permission: ${permKey}`);
             } catch (err) {
                 console.error(`[RBACMiddleware] Permission check error: ${err.message}`);
-                return res.status(500).json({
-                    response_status: { status_code: 5000, status: 'failed', message: 'Permission check failed.' }
-                });
+                return fail(res, 500, 5000, 'Permission check failed.');
             }
         };
     }
 
     static enforceAll(requiredPerms) {
         return async (req, res, next) => {
-            if (!req.memberId) {
-                return res.status(500).json({
-                    response_status: { status_code: 5000, status: 'failed', message: 'Server configuration error.' }
-                });
-            }
-
-            const memberId = req.memberId;
-            const orgId    = req.orgId;
+            const memberId = RequestContext.getMemberId();
+            if (!memberId) return fail(res, 500, 5000, 'Server configuration error.');
 
             try {
-                const permissions = await RBACMiddleware._loadPermissions(memberId, orgId, req.rangeStart, req.rangeEnd);
+                const permissions = await RBACMiddleware._loadPermissions(memberId);
                 const missing     = requiredPerms.filter(p => !permissions.has(`${p.resource}:${p.action}`));
 
                 if (missing.length === 0) {
@@ -62,14 +51,10 @@ class RBACMiddleware {
                 }
 
                 console.warn(`[RBACMiddleware] Denied: member=${memberId} missing ${missing.map(p => `${p.resource}:${p.action}`).join(', ')}`);
-                return res.status(403).json({
-                    response_status: { status_code: 4003, status: 'failed', message: `Access denied. Missing permissions: ${missing.map(p => `${p.resource}:${p.action}`).join(', ')}` }
-                });
+                return fail(res, 403, 4003, `Access denied. Missing permissions: ${missing.map(p => `${p.resource}:${p.action}`).join(', ')}`);
             } catch (err) {
                 console.error(`[RBACMiddleware] Permission check error: ${err.message}`);
-                return res.status(500).json({
-                    response_status: { status_code: 5000, status: 'failed', message: 'Permission check failed.' }
-                });
+                return fail(res, 500, 5000, 'Permission check failed.');
             }
         };
     }
@@ -79,7 +64,14 @@ class RBACMiddleware {
         console.log(`[RBACMiddleware] Cache invalidated for member ${memberId}`);
     }
 
-    static async _loadPermissions(memberId, orgId, rangeStart, rangeEnd) {
+    /**
+     * Loads all permissions for a member.
+     *
+     * Runs inside RequestContext.run() (called by DefaultRouterHandler), so
+     * DataAccess.get() auto-injects the org range into the query — no need
+     * to pass rangeStart/rangeEnd explicitly here.
+     */
+    static async _loadPermissions(memberId) {
         const cached = RBACMiddleware._permCache.get(memberId);
         if (cached && (Date.now() - cached.cachedAt) < RBACMiddleware.CACHE_TTL_MS) {
             return cached.permissions;
@@ -94,10 +86,8 @@ class RBACMiddleware {
         sq.addSelectColumn(Column.getColumn('p', 'action'));
         sq.addJoin(new Join(urTable, rpTable, ['role_id'],       ['role_id'],       Join.INNER));
         sq.addJoin(new Join(rpTable, pTable,  ['permission_id'], ['permission_id'], Join.INNER));
-        sq.setCriteria(
-            Criteria.eq(Column.getColumn('ur', 'member_id'), memberId)
-                .and(Criteria.between(Column.getColumn('ur', 'member_id'), rangeStart, rangeEnd))
-        );
+        // Filter by the specific member — range scoping is auto-injected by DataAccess.get()
+        sq.setCriteria(Criteria.eq(Column.getColumn('ur', 'member_id'), memberId));
 
         const rows    = await dataAccess.get(sq);
         const permSet = new Set();

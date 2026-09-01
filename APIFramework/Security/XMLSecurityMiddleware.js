@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const xml2js = require('xml2js');
+const { fail } = require('../Utils/ResponseUtil');
 
 class XMLSecurityMiddleware {
     constructor() {
@@ -146,9 +147,7 @@ class XMLSecurityMiddleware {
 
         if (!matchedRoute) {
             console.warn(`[XMLSecurity] URL Blocked - Not whitelisted: ${method} ${reqPath}`);
-            return res.status(403).json({
-                response_status: { status_code: 4003, status: 'failed', message: 'Access Denied: URL not whitelisted' }
-            });
+            return fail(res, 403, 4003, 'Access Denied: URL not whitelisted');
         }
 
         // --- Layer 2: Role Check ---
@@ -161,9 +160,7 @@ class XMLSecurityMiddleware {
 
             if (!hasRole) {
                 console.warn(`[XMLSecurity] Role Blocked - Required [${matchedRoute.roles}], Had [${userRoles}]: ${method} ${reqPath}`);
-                return res.status(403).json({
-                    response_status: { status_code: 4003, status: 'failed', message: 'Access Denied: Insufficient permissions' }
-                });
+                return fail(res, 403, 4003, 'Access Denied: Insufficient permissions');
             }
         }
 
@@ -191,9 +188,7 @@ class XMLSecurityMiddleware {
             }
         } catch (err) {
             console.warn(`[XMLSecurity] Template validation failed: ${err.message}`);
-            return res.status(400).json({
-                response_status: { status_code: 4000, status: 'failed', message: err.message }
-            });
+            return fail(res, 400, 4000, err.message);
         }
 
         console.log(`[XMLSecurity] Passed: ${method} ${reqPath}`);

@@ -51,9 +51,8 @@ class SequenceGenerator {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Get the next ID for a given org.
-     * Loads the org's range from DB on first call (or if not yet in memory).
-     * All subsequent calls within the org's range are served from memory — zero DB hits.
+     * Get the next ID for a given org — async path (loads from DB if not cached).
+     * Used during org creation and any context where the range may not yet be in memory.
      *
      * @param {number} orgId  — org_id from the organizations table
      * @returns {Promise<number>} globally unique, org-scoped ID
@@ -66,19 +65,36 @@ class SequenceGenerator {
             await this._loadRange(orgId);
         }
 
-        const { rangeEnd } = this._ranges.get(orgId);
-        const currentVal   = this._counters.get(orgId);
-        const nextVal      = currentVal + 1;
+        return this._incrementCounter(orgId);
+    }
 
-        if (nextVal > rangeEnd) {
-            // Range exhausted — not handled in Phase 1 (1 crore block is large enough)
-            throw new Error(`[SequenceGenerator] Org ${orgId} has exhausted its ID range (${rangeEnd}). Range expansion is a future feature.`);
+    /**
+     * Get the next ID for a given org — synchronous in-memory path.
+     *
+     * PRECONDITION: the org's range must already be loaded in memory
+     * (guaranteed after loadAllRanges() at boot, and after allocateOrgRange() for
+     * a newly created org). Throws synchronously if the range is not cached —
+     * this indicates a programming error (called before boot completed or for an
+     * org that was never created).
+     *
+     * Used by Row.get() for PK columns declared with <uniquevalue-generation> so
+     * that PK generation remains synchronous and does not require await in the caller.
+     *
+     * @param {number} orgId  — org_id from the organizations table
+     * @returns {number} globally unique, org-scoped ID
+     */
+    getNextIdSync(orgId) {
+        if (!orgId) throw new Error('[SequenceGenerator] orgId is required.');
+
+        if (!this._ranges.has(orgId)) {
+            throw new Error(
+                `[SequenceGenerator] Range for org ${orgId} is not loaded. ` +
+                `getNextIdSync() requires the range to be in memory — ensure loadAllRanges() ` +
+                `has completed at boot, or allocateOrgRange() was called for new orgs.`
+            );
         }
 
-        this._counters.set(orgId, nextVal);
-        this._dirty.add(orgId);
-
-        return nextVal;
+        return this._incrementCounter(orgId);
     }
 
     /**
@@ -170,6 +186,30 @@ class SequenceGenerator {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
+     * Shared counter increment logic used by both getNextId() and getNextIdSync().
+     * Assumes the range is already loaded in memory.
+     *
+     * @param {number} orgId
+     * @returns {number}
+     */
+    _incrementCounter(orgId) {
+        const { rangeEnd } = this._ranges.get(orgId);
+        const currentVal   = this._counters.get(orgId);
+        const nextVal      = currentVal + 1;
+
+        if (nextVal > rangeEnd) {
+            throw new Error(
+                `[SequenceGenerator] Org ${orgId} has exhausted its ID range (${rangeEnd}). ` +
+                `Range expansion is a future feature.`
+            );
+        }
+
+        this._counters.set(orgId, nextVal);
+        this._dirty.add(orgId);
+        return nextVal;
+    }
+
+    /**
      * Load a single org's range from DB into memory (lazy-load on first ID request).
      */
     async _loadRange(orgId) {
@@ -178,7 +218,7 @@ class SequenceGenerator {
             .select('range_start', 'range_end', 'current_val')
             .first();
         if (!row) {
-            throw new Error(`[SequenceGenerator] No ID range found for org ${orgId}. Was the org created via AuthController.createOrg()?`);
+            throw new Error(`[SequenceGenerator] No ID range found for org ${orgId}. Was the org created via OrgCreationHandler.createOrg()?`);
         }
         this._ranges.set(orgId, {
             rangeStart: parseInt(row.range_start, 10),

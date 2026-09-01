@@ -37,6 +37,9 @@
         <data-type>BIGINT</data-type>
         <max-size>19</max-size>
         <nullable>false</nullable>
+        <uniquevalue-generation>
+          <generator-name>roles.role_id</generator-name>
+        </uniquevalue-generation>
       </column>
       <column name="name">
         <description>Role name e.g. OrgAdmin, ModuleConfig, Member</description>
@@ -204,6 +207,9 @@
         <data-type>BIGINT</data-type>
         <max-size>19</max-size>
         <nullable>false</nullable>
+        <uniquevalue-generation>
+          <generator-name>org_members.member_id</generator-name>
+        </uniquevalue-generation>
       </column>
       <column name="auth_account_id">
         <description>FK to iam_auth_accounts.auth_account_id. The IAM identity bridge.</description>
@@ -257,6 +263,9 @@
         <data-type>BIGINT</data-type>
         <max-size>19</max-size>
         <nullable>false</nullable>
+        <uniquevalue-generation>
+          <generator-name>custom_modules.module_id</generator-name>
+        </uniquevalue-generation>
       </column>
       <column name="name">
         <description>Human-readable module name e.g. IT Procurement</description>
@@ -323,6 +332,9 @@
         <data-type>BIGINT</data-type>
         <max-size>19</max-size>
         <nullable>false</nullable>
+        <uniquevalue-generation>
+          <generator-name>custom_module_fields.field_id</generator-name>
+        </uniquevalue-generation>
       </column>
       <column name="module_id">
         <description>FK to custom_modules.module_id</description>
@@ -417,6 +429,9 @@
         <data-type>BIGINT</data-type>
         <max-size>19</max-size>
         <nullable>false</nullable>
+        <uniquevalue-generation>
+          <generator-name>custom_module_records.record_id</generator-name>
+        </uniquevalue-generation>
       </column>
       <column name="module_id">
         <description>FK to custom_modules.module_id</description>
@@ -476,6 +491,9 @@
         <data-type>BIGINT</data-type>
         <max-size>19</max-size>
         <nullable>false</nullable>
+        <uniquevalue-generation>
+          <generator-name>custom_module_values.value_id</generator-name>
+        </uniquevalue-generation>
       </column>
       <column name="record_id">
         <description>FK to custom_module_records.record_id</description>

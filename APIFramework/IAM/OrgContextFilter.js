@@ -1,6 +1,7 @@
 const dataAccess           = require('../Database/ORM/DataAccess');
 const VersatileCredentials = require('./VersatileCredentials');
 const { SelectQueryImpl, Criteria, Column, Table, Join } = require('../Database/QueryBuilder');
+const { fail }             = require('../Utils/ResponseUtil');
 
 class OrgContextFilter {
 
@@ -24,45 +25,23 @@ class OrgContextFilter {
         const orgHandle = match[1];
 
         const org = await OrgContextFilter._resolveOrg(orgHandle);
-        if (!org) {
-            return res.status(404).json({
-                response_status: { status_code: 4004, status: 'failed', message: `Organization '${orgHandle}' not found.` }
-            });
-        }
-        if (org.status !== 'active') {
-            return res.status(403).json({
-                response_status: { status_code: 4003, status: 'failed', message: `Organization '${orgHandle}' is ${org.status}.` }
-            });
-        }
+        if (!org) return fail(res, 404, 4004, `Organization '${orgHandle}' not found.`);
+        if (org.status !== 'active') return fail(res, 403, 4003, `Organization '${orgHandle}' is ${org.status}.`);
 
         const range = await OrgContextFilter._resolveRange(org.orgId);
         if (!range) {
             console.error(`[OrgContextFilter] No ID range for org ${org.orgId} (${orgHandle})`);
-            return res.status(500).json({
-                response_status: { status_code: 5000, status: 'failed', message: 'Organization configuration error.' }
-            });
+            return fail(res, 500, 5000, 'Organization configuration error.');
         }
 
         const authAccountId = req.authAccountId;
-        if (!authAccountId) {
-            return res.status(401).json({
-                response_status: { status_code: 4001, status: 'failed', message: 'Authentication required.' }
-            });
-        }
+        if (!authAccountId) return fail(res, 401, 4001, 'Authentication required.');
 
         const member = await OrgContextFilter._resolveMember(
             authAccountId, org.orgId, range.rangeStart, range.rangeEnd
         );
-        if (!member) {
-            return res.status(403).json({
-                response_status: { status_code: 4003, status: 'failed', message: 'You are not a member of this organization.' }
-            });
-        }
-        if (member.status !== 'active') {
-            return res.status(403).json({
-                response_status: { status_code: 4003, status: 'failed', message: `Your membership in this organization is ${member.status}.` }
-            });
-        }
+        if (!member) return fail(res, 403, 4003, 'You are not a member of this organization.');
+        if (member.status !== 'active') return fail(res, 403, 4003, `Your membership in this organization is ${member.status}.`);
 
         const roles = await OrgContextFilter._resolveMemberRoles(
             member.memberId, range.rangeStart, range.rangeEnd
@@ -110,7 +89,8 @@ class OrgContextFilter {
             sq.addSelectColumn(Column.getColumn('organizations', 'status'));
             sq.setCriteria(Criteria.eq(Column.getColumn('organizations', 'org_handle'), orgHandle));
 
-            const row = await dataAccess.getOne(sq);
+            // getRaw — organizations is a global table, not range-scoped
+            const row = await dataAccess.getOneRaw(sq);
             if (!row) return null;
 
             const entry = { orgId: parseInt(row.get('org_id'), 10), status: row.get('status'), cachedAt: Date.now() };
@@ -133,7 +113,8 @@ class OrgContextFilter {
             sq.addSelectColumn(Column.getColumn('org_id_ranges', 'range_end'));
             sq.setCriteria(Criteria.eq(Column.getColumn('org_id_ranges', 'org_id'), orgId));
 
-            const row = await dataAccess.getOne(sq);
+            // getRaw — org_id_ranges is a global framework table keyed by org_id, not range-scoped
+            const row = await dataAccess.getOneRaw(sq);
             if (!row) return null;
 
             const entry = {
@@ -164,7 +145,9 @@ class OrgContextFilter {
                     .and(Criteria.between(Column.getColumn('org_members', 'member_id'), rangeStart, rangeEnd))
             );
 
-            const row = await dataAccess.getOne(sq);
+            // getRaw — this runs BEFORE RequestContext exists (we are still building credentials)
+            // The explicit BETWEEN criteria above is the range guard here
+            const row = await dataAccess.getOneRaw(sq);
             if (!row) return null;
 
             const entry = {
@@ -187,20 +170,22 @@ class OrgContextFilter {
         }
 
         try {
-            const urTable = Table.getTable('user_roles', 'ur');
-            const rTable  = Table.getTable('roles', 'r');
+            const urTable = Table.getTable('user_roles');
+            const rTable  = Table.getTable('roles');
 
             const sq = new SelectQueryImpl(urTable);
-            sq.addSelectColumn(Column.getColumn('r', 'name'));
+            sq.addSelectColumn(Column.getColumn('user_roles', 'member_id'));
+            sq.addSelectColumn(Column.getColumn('roles', 'role_id'));
+            sq.addSelectColumn(Column.getColumn('roles', 'name'));
             sq.addJoin(new Join(urTable, rTable, ['role_id'], ['role_id'], Join.INNER));
             sq.setCriteria(
-                Criteria.eq(Column.getColumn('ur', 'member_id'), memberId)
-                    .and(Criteria.between(Column.getColumn('ur', 'member_id'), rangeStart, rangeEnd))
-                    .and(Criteria.between(Column.getColumn('ur', 'role_id'),   rangeStart, rangeEnd))
+                Criteria.eq(Column.getColumn('user_roles', 'member_id'), memberId)
+                    .and(Criteria.between(Column.getColumn('user_roles', 'member_id'), rangeStart, rangeEnd))
+                    .and(Criteria.between(Column.getColumn('user_roles', 'role_id'),   rangeStart, rangeEnd))
             );
 
-            const rows  = await dataAccess.get(sq);
-            const roles = rows.map(r => r.get('name'));
+            const dobj  = await dataAccess.getRaw(sq);
+            const roles = [...dobj.getRows('roles')].map(r => r.get('name'));
             OrgContextFilter._rolesCache.set(memberId, { roles, cachedAt: Date.now() });
             return roles;
         } catch (err) {

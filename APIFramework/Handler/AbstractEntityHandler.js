@@ -13,10 +13,6 @@ class AbstractEntityHandler extends APIHandler {
     }
 
     async handleAPICall(request) {
-        // Enforce criteria/license checks here before routing
-        this.applyDynamicJoins(request);
-        this.applySecurityCriteria(request);
-
         const method = request.operation.toUpperCase();
         switch (method) {
             case 'POST':
@@ -33,14 +29,6 @@ class AbstractEntityHandler extends APIHandler {
             default:
                 throw new Error(`Unsupported operation type: ${method}`);
         }
-    }
-
-    applySecurityCriteria(request) {
-        // Logic to restrict data visibility based on user's APIContext
-    }
-
-    applyDynamicJoins(request) {
-        // Evaluate fields requested to auto-inject necessary SQL joins
     }
 }
 
