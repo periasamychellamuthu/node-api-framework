@@ -4,7 +4,7 @@ const knex              = require('../KnexClient');
 const SchemaRegistry    = require('./SchemaRegistry');
 const Row               = require('./Row');
 const DataObject        = require('./DataObject');
-const { applyCriteria } = require('./Criteria');
+const { applyCriteria, CriteriaBuilder } = require('./Criteria');
 const QueryExecutor     = require('../QueryBuilder/QueryExecutor');
 const SelectQueryImpl   = require('../QueryBuilder/SelectQueryImpl');
 const UpdateQueryImpl   = require('../QueryBuilder/UpdateQueryImpl');
@@ -25,80 +25,41 @@ class DataAccess {
         return new Row(tableName);
     }
 
-    // ── PersistenceUtil-style helpers (mirrors SDP PersistenceUtil.addChildRowIntoDO) ──
+    // ── DataObject — stage then flush ─────────────────────────────────────────
     //
-    // SDP pattern:
-    //   DataObject dObj = DataAccessUtil.getInstance().constructDataObject();
-    //   Row row = new Row(tableName);
-    //   PersistenceUtil.addChildRowIntoDO(dObj, row);          // ADD
-    //   PersistenceUtil.updateChildRowIntoDO(dObj, row);       // UPDATE
-    //   PersistenceUtil.deleteChildRowIntoDO(dObj, row);       // DELETE
+    // All row mutations are staged directly on the DataObject, then flushed
+    // via a single dataAccess call. This is the two-step model:
     //
-    // Versatile equivalent — all three operations on a single DataObject:
-    //   const dObj = dataAccess.constructDataObject();
-    //   const row  = dataAccess.newRow('roles');
-    //   row.set('name', 'Viewer');
-    //   dataAccess.addChildRowIntoDO(dObj, row);               // ADD
-    //   dataAccess.updateChildRowIntoDO(dObj, existingRow);    // UPDATE
-    //   dataAccess.deleteChildRowIntoDO(dObj, existingRow);    // DELETE
-    //   await dataAccess.add(dObj);      // flush ADD rows
-    //   await dataAccess.update(dObj);   // flush UPDATE rows
-    //   await dataAccess.delete(dObj);   // flush DELETE rows
+    //   Step 1 — Stage on DataObject:
+    //     dObj.addRow(row)              → INSERT (RowRef handles parent-child FK wiring)
+    //     dObj.updateRow(row)           → UPDATE (only dirty columns written)
+    //     dObj.deleteRow(row)           → DELETE one specific fetched row
+    //     dObj.deleteRows(table, crit)  → DELETE all rows matching a CriteriaBuilder filter
     //
-    // You can also mix ADD + UPDATE + DELETE rows in one DataObject and flush
-    // each operation separately, or use dataAccess.persistDataObject(dObj) to
-    // flush all three operations in a single transaction.
-
-    /**
-     * Registers a Row as an INSERT operation inside the DataObject.
-     * Mirrors: PersistenceUtil.addChildRowIntoDO(dObj, row)
-     *
-     * @param {DataObject} dObj  — the unit-of-work container
-     * @param {Row}        row   — the Row to INSERT (must be fully populated)
-     */
-    addChildRowIntoDO(dObj, row) {
-        dObj.addRow(row);
-    }
-
-    /**
-     * Registers a Row as an UPDATE operation inside the DataObject.
-     * Mirrors: PersistenceUtil.updateChildRowIntoDO(dObj, row)
-     *
-     * Only dirty columns (changed since last markFetched()) will be written.
-     *
-     * @param {DataObject} dObj  — the unit-of-work container
-     * @param {Row}        row   — the Row to UPDATE (must have been fetched first)
-     */
-    updateChildRowIntoDO(dObj, row) {
-        dObj.updateRow(row);
-    }
-
-    /**
-     * Registers a Row as a DELETE operation inside the DataObject.
-     * Mirrors: PersistenceUtil.deleteChildRowIntoDO(dObj, row)
-     *
-     * @param {DataObject} dObj  — the unit-of-work container
-     * @param {Row}        row   — the Row to DELETE (PK must be set)
-     */
-    deleteChildRowIntoDO(dObj, row) {
-        dObj.deleteRow(row);
-    }
+    //   Step 2 — Flush:
+    //     await dataAccess.add(dObj, trx)              → flushes ADD rows only
+    //     await dataAccess.update(dObj, trx)           → flushes UPDATE rows only
+    //     await dataAccess.delete(dObj, trx)           → flushes DELETE rows only
+    //     await dataAccess.persistDataObject(dObj, trx)→ flushes ADD + UPDATE + DELETE atomically
+    //
+    // Always pass the active Knex trx from TransactionManager.beginTxn() so all
+    // writes participate in the same transaction and roll back together on error.
 
     /**
      * Flushes ALL pending operations (ADD + UPDATE + DELETE) from a DataObject
      * in a single atomic transaction.
      *
      * Execution order:
-     *   1. INSERT  rows (FK-dependency order via topo-sort)
-     *   2. UPDATE  rows (only dirty columns)
-     *   3. DELETE  rows (reverse FK order)
+     *   1. INSERT  rows — FK-dependency order via topo-sort; RowRef placeholders resolved
+     *   2. UPDATE  rows — only dirty columns written per row
+     *   3. DELETE  rows — reverse FK order; both row-by-row and criteria-scoped deletes
      *
-     * Use this when your handler builds one DataObject with multiple operation
-     * types and wants to commit everything in one shot — mirrors the SDP pattern
-     * of calling PersistenceUtil.persist(dObj) after all rows are staged.
+     * Prefer passing an active trx from TransactionManager.beginTxn() so this flush
+     * participates in the caller's transaction. When trx is omitted a new internal
+     * Knex transaction is opened for this flush only.
      *
      * @param {DataObject} dObj
-     * @param {object}     trx   — optional Knex transaction (pass from dataAccess.transaction())
+     * @param {import('knex').Knex.Transaction} [trx]
      */
     async persistDataObject(dObj, trx) {
         const execute = async (qb) => {
@@ -107,7 +68,7 @@ class DataAccess {
             for (const table of insertTables) {
                 const pkCol = SchemaRegistry.getPrimaryKey(table);
                 for (const row of dObj.getAddedRows(table)) {
-                    const resolved  = row.toResolvedObject();
+                    const resolved   = row.toResolvedObject();
                     const [insertId] = await qb(table).insert(resolved);
                     if (pkCol && insertId && !row._current[pkCol]) {
                         row._current[pkCol] = insertId;
@@ -122,7 +83,7 @@ class DataAccess {
                 for (const row of dObj.getUpdatedRows(table)) {
                     if (!row.isDirty()) continue;
                     const changes = row.toDirtyObject();
-                    let q = qb(table).update(changes);
+                    let q = qb(table).update(changes);  //the actual SQL isn't sent to the database until the query is awaited
                     for (const col of pkCols) q = q.where(col, row.getOriginal(col) ?? row.get(col));
                     await q;
                     row.markFetched();
@@ -132,10 +93,19 @@ class DataAccess {
             // ── 3. DELETE ────────────────────────────────────────────────────────
             const deleteTables = this._topoSort([...dObj.tableNames()], 'DELETE');
             for (const table of deleteTables) {
+                // 3a. Row-by-row deletes (deleteRow)
                 const pkCols = this._pkCols(table);
                 for (const row of dObj.getDeletedRows(table)) {
-                    let q = qb(table).delete();
+                    let q = qb(table).delete(); //the actual SQL isn't sent to the database until the query is awaited
                     for (const col of pkCols) q = q.where(col, row.get(col));
+                    await q;
+                }
+                // 3b. Criteria-scoped deletes (deleteRows)
+                for (const { criteria } of dObj.getCriteriaDeletes(table)) {
+                    let q = qb(table).delete();
+                    if (criteria && criteria.length > 0) {
+                        applyCriteria(q, criteria);
+                    }
                     await q;
                 }
             }
@@ -152,77 +122,226 @@ class DataAccess {
 
     // ── READ — range-scoped (primary API for all entity handler queries) ─────────
     //
-    // get()    and getOne()    automatically AND the org range criteria onto any
-    // SelectQueryImpl that is passed in, when a RequestContext is active.
+    // Two call forms are supported:
     //
-    // How it works:
-    //   1. Reads rangeStart / rangeEnd from RequestContext (ALS — zero param passing)
-    //   2. Resolves the PK column for the query's base table from SchemaRegistry
-    //   3. Clones the query and appends:
-    //        WHERE <pk> BETWEEN rangeStart AND rangeEnd
-    //      combined with whatever criteria the caller already set
-    //   4. Executes the scoped clone — the original query object is never mutated
+    //   Form 1 — SelectQueryImpl (full control):
+    //     const sq = new SelectQueryImpl('org_members');
+    //     sq.setCriteria(Criteria.eq(Column.getColumn('org_members', 'status'), 'active'));
+    //     await dataAccess.get(sq);
     //
-    // When NOT to use:
-    //   IAM routes, OrgContextFilter internals, SequenceGenerator, SchemaBuilder,
-    //   or any query that intentionally spans all orgs (e.g. email uniqueness check).
-    //   Use getRaw() / getOneRaw() for those — they skip range injection entirely.
+    //   Form 2 — shorthand (table name + CriteriaBuilder):
+    //     const criteria = new CriteriaBuilder()
+    //         .eq('status', 'active')
+    //         .between('member_id', rangeStart, rangeEnd)
+    //         .build();
+    //     await dataAccess.get('org_members', criteria);
     //
-    // ── getRaw()    and getOneRaw() bypass range injection completely ──────────
-    // Use these when:
-    //   - Querying framework/IAM tables (iam_auth_accounts, organizations, token_blacklist)
-    //   - Inside OrgContextFilter itself (resolving org/member/roles)
-    //   - Any cross-org admin query (future platform-admin features)
-    //   - Unit tests that run outside a RequestContext
+    //   In Form 2 the CriteriaBuilder conditions are translated to a Criteria AST
+    //   and a SelectQueryImpl (SELECT * FROM <table>) is built internally.
+    //   The result is identical to Form 1 with no explicit column selection.
+    //
+    // get() and getOne() automatically AND the org range BETWEEN onto the query
+    // when a RequestContext is active. getRaw() / getOneRaw() skip range injection
+    // entirely — use those for IAM tables, OrgContextFilter, and cross-org queries.
 
     /**
      * Range-scoped SELECT — returns all matching rows.
      * Auto-injects BETWEEN rangeStart AND rangeEnd on the PK when RequestContext is active.
      *
-     * @param {SelectQueryImpl|UnionQueryImpl} selectQuery
-     * @param {object} [trx]  optional Knex transaction
+     * @param {SelectQueryImpl|UnionQueryImpl|string} queryOrTable
+     *   Pass a SelectQueryImpl / UnionQueryImpl for full control, or a table name string
+     *   when using the shorthand form with a CriteriaBuilder array.
+     * @param {Array|object} [criteriaOrTrx]
+     *   When queryOrTable is a string: the criteria array produced by CriteriaBuilder.build().
+     *   When queryOrTable is a SelectQueryImpl: optional Knex transaction object.
+     * @param {object} [trx]  optional Knex transaction (shorthand form only)
      * @returns {Promise<Row[]>}
      */
-    async get(selectQuery, trx) {
+    async get(queryOrTable, criteriaOrTrx, trx) {
+        const { selectQuery, transaction } = this._resolveArgs(queryOrTable, criteriaOrTrx, trx);
         const scopedQuery = this._applyScopeIfActive(selectQuery);
-        return this._getByQuery(scopedQuery, trx);
+        return this._getByQuery(scopedQuery, transaction);
     }
 
     /**
      * Range-scoped SELECT — returns the first matching row or null.
      * Auto-injects BETWEEN rangeStart AND rangeEnd on the PK when RequestContext is active.
      *
-     * @param {SelectQueryImpl} selectQuery
-     * @param {object} [trx]  optional Knex transaction
+     * @param {SelectQueryImpl|string} queryOrTable
+     * @param {Array|object} [criteriaOrTrx]
+     * @param {object} [trx]
      * @returns {Promise<Row|null>}
      */
-    async getOne(selectQuery, trx) {
+    async getOne(queryOrTable, criteriaOrTrx, trx) {
+        const { selectQuery, transaction } = this._resolveArgs(queryOrTable, criteriaOrTrx, trx);
         const scopedQuery = this._applyScopeIfActive(selectQuery);
-        return this._getOneByQuery(scopedQuery, trx);
+        return this._getOneByQuery(scopedQuery, transaction);
     }
 
     /**
      * Unscoped SELECT — returns all matching rows, NO range injection.
      * Use for IAM tables, OrgContextFilter, cross-org admin queries.
      *
-     * @param {SelectQueryImpl|UnionQueryImpl} selectQuery
-     * @param {object} [trx]  optional Knex transaction
+     * @param {SelectQueryImpl|UnionQueryImpl|string} queryOrTable
+     * @param {Array|object} [criteriaOrTrx]
+     * @param {object} [trx]
      * @returns {Promise<Row[]>}
      */
-    async getRaw(selectQuery, trx) {
-        return this._getByQuery(selectQuery, trx);
+    async getRaw(queryOrTable, criteriaOrTrx, trx) {
+        const { selectQuery, transaction } = this._resolveArgs(queryOrTable, criteriaOrTrx, trx);
+        return this._getByQuery(selectQuery, transaction);
     }
 
     /**
      * Unscoped SELECT — returns first row or null, NO range injection.
      * Use for IAM tables, OrgContextFilter, cross-org admin queries.
      *
-     * @param {SelectQueryImpl} selectQuery
-     * @param {object} [trx]  optional Knex transaction
+     * @param {SelectQueryImpl|string} queryOrTable
+     * @param {Array|object} [criteriaOrTrx]
+     * @param {object} [trx]
      * @returns {Promise<Row|null>}
      */
-    async getOneRaw(selectQuery, trx) {
-        return this._getOneByQuery(selectQuery, trx);
+    async getOneRaw(queryOrTable, criteriaOrTrx, trx) {
+        const { selectQuery, transaction } = this._resolveArgs(queryOrTable, criteriaOrTrx, trx);
+        return this._getOneByQuery(selectQuery, transaction);
+    }
+
+    // ── Private: argument resolver ────────────────────────────────────────────
+
+    /**
+     * Resolves the two supported call forms into a canonical { selectQuery, transaction }.
+     *
+     * Form 1 — query object:
+     *   _resolveArgs(selectQueryImpl, trx)
+     *   _resolveArgs(unionQueryImpl,  trx)
+     *
+     * Form 2 — shorthand (table + CriteriaBuilder output):
+     *   _resolveArgs('org_members', criteriaArray, trx)
+     *
+     *   criteriaArray must be the array produced by CriteriaBuilder.build():
+     *     [{ column, operator, value, join }, ...]
+     *
+     *   Each condition is translated to a Criteria AST node and combined with
+     *   AND (default) or OR (when condition.join === 'or').
+     *   The resulting Criteria tree is set on a fresh SELECT * FROM <table> query.
+     *
+     * Throws a clear error if:
+     *   - A raw JSON array is passed as the first argument (unsupported).
+     *   - The first argument is neither a SelectQueryImpl, UnionQueryImpl, nor a string.
+     *   - The second argument (criteria) is not a plain array.
+     *
+     * @param {SelectQueryImpl|UnionQueryImpl|string} queryOrTable
+     * @param {Array|object|undefined}                criteriaOrTrx
+     * @param {object|undefined}                      trx
+     * @returns {{ selectQuery: SelectQueryImpl|UnionQueryImpl, transaction: object|undefined }}
+     */
+    _resolveArgs(queryOrTable, criteriaOrTrx, trx) {
+        // ── Form 1: first arg is a query object ──────────────────────────────
+        if (queryOrTable instanceof SelectQueryImpl || queryOrTable instanceof UnionQueryImpl) {
+            return { selectQuery: queryOrTable, transaction: criteriaOrTrx };
+        }
+
+        // ── Guard: reject plain array as first arg ───────────────────────────
+        if (Array.isArray(queryOrTable)) {
+            throw new Error(
+                '[DataAccess] Passing a plain array as the first argument is not supported. ' +
+                'Use a SelectQueryImpl, or pass a table name string with a CriteriaBuilder array: ' +
+                'dataAccess.get(\'table\', new CriteriaBuilder().eq(...).build())'
+            );
+        }
+
+        // ── Form 2: first arg is a table name string ─────────────────────────
+        if (typeof queryOrTable === 'string') {
+            const tableName    = queryOrTable;
+            const criteriaArr  = criteriaOrTrx;
+            const transaction  = trx;
+
+            if (criteriaArr !== undefined && !Array.isArray(criteriaArr)) {
+                throw new Error(
+                    `[DataAccess] When calling get('${tableName}', criteria), ` +
+                    'criteria must be the array returned by CriteriaBuilder.build(). ' +
+                    `Received: ${typeof criteriaArr}`
+                );
+            }
+
+            const sq = new SelectQueryImpl(tableName);
+
+            if (criteriaArr && criteriaArr.length > 0) {
+                sq.setCriteria(this._criteriaArrayToAST(criteriaArr, tableName));
+            }
+
+            return { selectQuery: sq, transaction };
+        }
+
+        // ── Unsupported type ─────────────────────────────────────────────────
+        throw new Error(
+            '[DataAccess] First argument must be a SelectQueryImpl, UnionQueryImpl, or a table name string. ' +
+            `Received: ${typeof queryOrTable}`
+        );
+    }
+
+    /**
+     * Translates a CriteriaBuilder output array into a Criteria AST tree.
+     *
+     * Each element in the array:
+     *   { column: string, operator: string, value: any, join: 'and'|'or' }
+     *
+     * Operator names match ORM CriteriaBuilder keys:
+     *   eq, neq, gt, gte, lt, lte, in, notIn, like, startsWith,
+     *   isNull, notNull, between, notBetween
+     *
+     * The plain string column name from the CriteriaBuilder condition is wrapped
+     * into a Column object (table = null, columnName = column) so that
+     * QueryExecutor.columnRef() can render it correctly as a bare column name
+     * (no table prefix) in the generated SQL.
+     *
+     * Conditions are combined left-to-right:
+     *   - join === 'or'  → node.or(next)
+     *   - otherwise      → node.and(next)  (default)
+     *
+     * @param {Array<{ column: string, operator: string, value: any, join: string }>} conditions
+     * @param {string} tableName — the base table name (used to wrap plain string columns)
+     * @returns {Criteria}
+     */
+    _criteriaArrayToAST(conditions, tableName) {
+        // Wrap a plain string column name into a Column object so QueryExecutor
+        // can render it. We pass tableName so the generated SQL uses
+        // "tableName.columnName" which avoids ambiguity in single-table queries.
+        const col = (name) => Column.getColumn(tableName, name);
+
+        const build = (condition) => {
+            const { column, operator, value } = condition;
+            const c = col(column);
+            switch (operator) {
+                case 'eq':          return Criteria.eq(c, value);
+                case 'neq':         return Criteria.neq(c, value);
+                case 'gt':          return Criteria.gt(c, value);
+                case 'gte':         return Criteria.gte(c, value);
+                case 'lt':          return Criteria.lt(c, value);
+                case 'lte':         return Criteria.lte(c, value);
+                case 'in':          return Criteria.in(c, value);
+                case 'notIn':       return Criteria.notIn(c, value);
+                case 'like':        return Criteria.like(c, value);
+                case 'startsWith':  return Criteria.startsWith(c, value);
+                case 'isNull':      return Criteria.isNull(c);
+                case 'notNull':     return Criteria.isNotNull(c);
+                case 'between':     return Criteria.between(c, value[0], value[1]);
+                case 'notBetween':  return Criteria.notBetween(c, value[0], value[1]);
+                default:
+                    throw new Error(
+                        `[DataAccess] _criteriaArrayToAST: unknown operator "${operator}". ` +
+                        'Use a CriteriaBuilder to build criteria — do not construct condition ' +
+                        'objects manually with unsupported operator names.'
+                    );
+            }
+        };
+
+        let root = build(conditions[0]);
+        for (let i = 1; i < conditions.length; i++) {
+            const node = build(conditions[i]);
+            root = conditions[i].join === 'or' ? root.or(node) : root.and(node);
+        }
+        return root;
     }
 
     // ── Private: query execution ──────────────────────────────────────────────
@@ -649,10 +768,23 @@ class DataAccess {
 
         const execute = async (qb) => {
             for (const table of writeOrder) {
+                // ── Row-by-row deletes — deleteRow(row) ──────────────────────────
+                // Each staged row contributes one DELETE WHERE pk = ? statement.
                 const pkCols = this._pkCols(table);
                 for (const row of dataObject.getDeletedRows(table)) {
                     let q = qb(table).delete();
                     for (const col of pkCols) q = q.where(col, row.get(col));
+                    await q;
+                }
+
+                // ── Criteria-scoped deletes — deleteRows(table, criteria) ─────────
+                // Each deleteRows() call contributes one DELETE WHERE <criteria> statement.
+                // No rows need to be fetched first — the criteria builds the WHERE clause.
+                for (const { criteria } of dataObject.getCriteriaDeletes(table)) {
+                    let q = qb(table).delete();
+                    if (criteria && criteria.length > 0) {
+                        applyCriteria(q, criteria);
+                    }
                     await q;
                 }
             }
@@ -668,7 +800,7 @@ class DataAccess {
     }
 
     // ── Upsert (direct, no InsertQueryImpl wrapping needed for simple cases) ──
-
+    //If a row already exists with matching conflictColumns values, .ignore() causes the insert to be silently skipped (no error, no update) — i.e., "insert if not exists" semantics rather than a true insert-or-update upsert.
     async upsert(table, obj, conflictColumns, trx) {
         const qb = trx || knex;
         await qb(table).insert(obj).onConflict(conflictColumns).ignore();

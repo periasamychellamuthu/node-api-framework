@@ -1,36 +1,41 @@
 /**
  * Criteria — structured filter builder for the Versatile ORM layer.
  *
- * Design (row-oriented-orm-wrapper-over-knex.md §6):
- *   "Filters are expressed as structured criteria objects rather than raw Knex .where() calls.
- *    This keeps filter logic serializable, testable in isolation, and independent of the
- *    underlying query builder."
+ * Filters are expressed as structured criteria objects rather than raw Knex .where() calls.
+ * This keeps filter logic serializable, testable in isolation, and independent of the
+ * underlying query builder.
  *
- * Versatile additions beyond the reference doc:
- *   - `between` operator   → .whereBetween()   (used for org range scoping)
- *   - `notIn` operator     → .whereNotIn()
- *   - `notNull` operator   → .whereNotNull()
- *   - Fluent builder (CriteriaBuilder) as an ergonomic alternative to raw arrays
+ * ── Two ways to query with DataAccess ────────────────────────────────────────
  *
- * Usage — raw array form (matches reference doc exactly):
- *   const criteria = [
- *     { column: 'status',    operator: 'eq',      value: 'active' },
- *     { column: 'member_id', operator: 'between', value: [1000001, 2000000] },
- *   ];
- *   await dataModel.get('org_members', criteria);
+ * Form 1 — SelectQueryImpl (full control, supports joins / column selection):
  *
- * Usage — fluent builder form:
+ *   const sq = new SelectQueryImpl('org_members');
+ *   sq.setCriteria(
+ *       Criteria.eq(Column.getColumn('org_members', 'status'), 'active')
+ *           .and(Criteria.between(Column.getColumn('org_members', 'member_id'), rangeStart, rangeEnd))
+ *   );
+ *   const rows = await dataAccess.get(sq);
+ *
+ * Form 2 — shorthand (table name + CriteriaBuilder):
+ *
  *   const criteria = new CriteriaBuilder()
  *       .eq('status', 'active')
  *       .between('member_id', rangeStart, rangeEnd)
  *       .build();
- *   await dataModel.get('org_members', criteria);
+ *   const rows = await dataAccess.get('org_members', criteria);
+ *
+ *   DataAccess translates the CriteriaBuilder array into a Criteria AST internally
+ *   and issues SELECT * FROM org_members with the resulting WHERE clause.
+ *   Use Form 1 when you need explicit column selection, joins, or sorting.
+ *   Use Form 2 for simple single-table filtered fetches.
+ *
+ * ── DO NOT pass a raw JSON array as the first argument ───────────────────────
+ *   dataAccess.get([{ column: 'status', operator: 'eq', value: 'active' }])  // ✗ runtime error
+ *   The first argument must always be a SelectQueryImpl, UnionQueryImpl, or a table name string.
  */
 
-// ─── Operator map ─────────────────────────────────────────────────────────────
 // Each entry maps an operator name to a function that applies it to a Knex query.
 // applyCriteria() iterates the criteria array and calls the matching function.
-
 const OPERATOR_MAP = {
     /** Exact match — WHERE column = value */
     eq: (query, column, value) => query.where(column, value),

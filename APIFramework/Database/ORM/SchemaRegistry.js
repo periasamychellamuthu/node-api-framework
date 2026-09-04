@@ -13,7 +13,7 @@
  *   is the single source of truth for all column metadata and FK definitions.
  *
  *   This is the glue between the DD layer (XML → DataDictionaryParser) and the
- *   ORM layer (DataModel → SchemaRegistry).
+  *   ORM layer (DataAccess → SchemaRegistry).
  *
  * API:
  *   schemaRegistry.get(tableName)                  → column definition map

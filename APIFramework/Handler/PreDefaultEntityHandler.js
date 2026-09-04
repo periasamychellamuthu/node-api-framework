@@ -7,6 +7,7 @@ const JSONDOConverter        = require('../Transformer/JSONDOConverter');
 const ResponseTransformer    = require('../Transformer/ResponseTransformer');
 const ListenerDispatcher     = require('../Listener/ListenerDispatcher');
 const RequestContext          = require('../Context/RequestContext');
+const TransactionManager     = require('../Transaction/TransactionManager');
 const { SelectQueryImpl, Criteria, Column, Table, Range, SortColumn } = require('../Database/QueryBuilder');
 
 class PreDefaultEntityHandler extends AbstractEntityHandler {
@@ -106,7 +107,6 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
         const pkColumn  = entity.getIdentifierField().getColumnName();
 
         await DefaultEntityValidator.validatePipeline(request);
-        await ListenerDispatcher.dispatch('beforeCreate', entity, request.inputData, req);
 
         const plainObj = await JSONDOConverter.transformJSONToEntity(request);
 
@@ -120,17 +120,35 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
         // Row.get() calls SequenceGenerator.getNextIdSync(orgId) via RequestContext.
         const insertId = row.get(pkColumn);
 
-        await dataAccess.add(dobj);
+        // ── Transaction lifecycle ─────────────────────────────────────────────
+        // Phase 1 (inside txn): beforeCreate listener + DB write
+        // Phase 2 (after commit): afterCreate listener — DB is durable at this point
+        const handle = await TransactionManager.beginTxn();
+        let jsonRow;
+        try {
+            await ListenerDispatcher.dispatch('beforeCreate', entity, request.inputData, req);
 
-        // Fetch back by exact PK — DataAccess.getOne() will AND the range automatically
-        const fetchSq = new SelectQueryImpl(Table.getTable(tableName));
-        fetchSq.addSelectColumns(this._buildSelectColumns(entity));
-        fetchSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), insertId));
-        const created = await dataAccess.getOne(fetchSq);
-        const jsonRow = await JSONDOConverter.transformEntityToJSON(
-            created ? created.toObject() : plainObj, entity
-        );
+            await dataAccess.add(dobj, handle.trx);
 
+            // Fetch back by exact PK inside the same transaction so we read our
+            // own uncommitted write — range auto-scoped by DataAccess.getOne()
+            const fetchSq = new SelectQueryImpl(Table.getTable(tableName));
+            fetchSq.addSelectColumns(this._buildSelectColumns(entity));
+            fetchSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), insertId));
+            const created = await dataAccess.getOne(fetchSq, handle.trx);
+            jsonRow = await JSONDOConverter.transformEntityToJSON(
+                created ? created.toObject() : plainObj, entity
+            );
+
+            await TransactionManager.commitTxn(handle);
+        } catch (err) {
+            await TransactionManager.rollbackTxn(handle);
+            return request.response.status(500).json({
+                response_status: { status: 'failed', message: err.message }
+            });
+        }
+
+        // Phase 2 — afterCreate fires AFTER commit; DB write is durable
         await ListenerDispatcher.dispatch('afterCreate', entity, jsonRow, req);
 
         return request.response.status(200).json(
@@ -146,7 +164,6 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
         const pkColumn  = entity.getIdentifierField().getColumnName();
 
         await DefaultEntityValidator.validatePipeline(request);
-        await ListenerDispatcher.dispatch('beforeUpdate', entity, request.inputData, req);
 
         const plainChanges = await JSONDOConverter.transformJSONToEntity(request);
         if (Object.keys(plainChanges).length === 0) {
@@ -155,8 +172,8 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
             });
         }
 
-        // Fetch existing — DataAccess.getOne() auto-scopes by range, so a user
-        // from a different org that guesses this ID will get null → 404
+        // Fetch existing before the transaction — read-only, no txn needed.
+        // DataAccess.getOne() auto-scopes by range; a different org's ID returns null → 404.
         const fetchSq = new SelectQueryImpl(Table.getTable(tableName));
         fetchSq.addSelectColumns(this._buildSelectColumns(entity));
         fetchSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));
@@ -170,25 +187,44 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
 
         for (const [k, v] of Object.entries(plainChanges)) existing.set(k, v);
 
+        // Nothing actually changed — return current state without touching the DB
         if (!existing.isDirty()) {
             return request.response.status(200).json(
-                ResponseTransformer.transform(entity, 'edit', await JSONDOConverter.transformEntityToJSON(existing.toObject(), entity))
+                ResponseTransformer.transform(entity, 'edit',
+                    await JSONDOConverter.transformEntityToJSON(existing.toObject(), entity))
             );
         }
 
-        const dobj = dataAccess.constructDataObject();
-        dobj.updateRow(existing);
-        await dataAccess.update(dobj);
+        // ── Transaction lifecycle ─────────────────────────────────────────────
+        // Phase 1 (inside txn): beforeUpdate listener + DB write
+        // Phase 2 (after commit): afterUpdate listener — DB is durable at this point
+        const handle = await TransactionManager.beginTxn();
+        let jsonRow;
+        try {
+            await ListenerDispatcher.dispatch('beforeUpdate', entity, request.inputData, req);
 
-        // Fetch updated row — range auto-scoped again
-        const updatedSq = new SelectQueryImpl(Table.getTable(tableName));
-        updatedSq.addSelectColumns(this._buildSelectColumns(entity));
-        updatedSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));
-        const updated = await dataAccess.getOne(updatedSq);
-        const jsonRow = await JSONDOConverter.transformEntityToJSON(
-            updated ? updated.toObject() : existing.toObject(), entity
-        );
+            const dobj = dataAccess.constructDataObject();
+            dobj.updateRow(existing);
+            await dataAccess.update(dobj, handle.trx);
 
+            // Fetch updated row inside the same transaction
+            const updatedSq = new SelectQueryImpl(Table.getTable(tableName));
+            updatedSq.addSelectColumns(this._buildSelectColumns(entity));
+            updatedSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));
+            const updated = await dataAccess.getOne(updatedSq, handle.trx);
+            jsonRow = await JSONDOConverter.transformEntityToJSON(
+                updated ? updated.toObject() : existing.toObject(), entity
+            );
+
+            await TransactionManager.commitTxn(handle);
+        } catch (err) {
+            await TransactionManager.rollbackTxn(handle);
+            return request.response.status(500).json({
+                response_status: { status: 'failed', message: err.message }
+            });
+        }
+
+        // Phase 2 — afterUpdate fires AFTER commit; DB write is durable
         await ListenerDispatcher.dispatch('afterUpdate', entity, jsonRow, req);
 
         return request.response.status(200).json(
@@ -209,9 +245,8 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
             });
         }
 
-        await ListenerDispatcher.dispatch('beforeDelete', entity, { id: entityId }, req);
-
-        // Fetch existing — range auto-scoped, cross-org delete attempt returns null → 404
+        // Fetch existing before the transaction — read-only, no txn needed.
+        // Range auto-scoped; a cross-org ID returns null → 404.
         const fetchSq = new SelectQueryImpl(Table.getTable(tableName));
         fetchSq.addSelectColumns(this._buildSelectColumns(entity));
         fetchSq.setCriteria(Criteria.eq(Column.getColumn(tableName, pkColumn), entityId));
@@ -223,10 +258,26 @@ class PreDefaultEntityHandler extends AbstractEntityHandler {
             });
         }
 
-        const dobj = dataAccess.constructDataObject();
-        dobj.deleteRow(existing);
-        await dataAccess.delete(dobj);
+        // ── Transaction lifecycle ─────────────────────────────────────────────
+        // Phase 1 (inside txn): beforeDelete listener + DB write
+        // Phase 2 (after commit): afterDelete listener — DB write is durable
+        const handle = await TransactionManager.beginTxn();
+        try {
+            await ListenerDispatcher.dispatch('beforeDelete', entity, { id: entityId }, req);
 
+            const dobj = dataAccess.constructDataObject();
+            dobj.deleteRow(existing);
+            await dataAccess.delete(dobj, handle.trx);
+
+            await TransactionManager.commitTxn(handle);
+        } catch (err) {
+            await TransactionManager.rollbackTxn(handle);
+            return request.response.status(500).json({
+                response_status: { status: 'failed', message: err.message }
+            });
+        }
+
+        // Phase 2 — afterDelete fires AFTER commit; DB write is durable
         await ListenerDispatcher.dispatch('afterDelete', entity, { id: entityId }, req);
 
         return request.response.status(200).json({

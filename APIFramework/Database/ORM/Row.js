@@ -97,8 +97,7 @@ class Row {
                         `or set the PK explicitly via row.set() for seeding/migration contexts.`
                     );
                 }
-                // Eagerly generate and cache the real ID — same approach as SDP's Row.get()
-                // which calls SequenceGenerator.nextValue() on the hot path.
+                // Eagerly generate and cache the real ID on the hot path.
                 const id = SequenceGenerator.getNextIdSync(orgId);
                 this._current[column] = id;
                 return id;

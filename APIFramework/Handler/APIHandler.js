@@ -1,6 +1,5 @@
 /**
  * Base interface class representing the standard contract for any API Handler.
- * Based on the SDP FW APIHandler contract.
  */
 class APIHandler {
     constructor() {

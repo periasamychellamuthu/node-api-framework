@@ -78,7 +78,7 @@ const DBConnectionPool     = require('./APIFramework/Database/DBConnectionPool')
     }
 
     // Step 5: Populate ORM SchemaRegistry from the parsed DD definitions.
-    //   Must run AFTER parseDataDictionaries() and BEFORE any DataAccess/DataModel calls.
+    //   Must run AFTER parseDataDictionaries() and BEFORE any DataAccess calls.
     try {
         const schemaRegistry = require('./APIFramework/Database/ORM/SchemaRegistry');
         schemaRegistry.loadFromDataDictionary();

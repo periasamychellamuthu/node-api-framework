@@ -64,7 +64,7 @@ function isMetaInfoCall(path) {
  *   navigationInfo          — linked chain of NavigationInfo for nested paths
  *   firstTokenInPath        — the first URL segment (debug / logging)
  *
- * Walk rules (mirrors SDP URIParseResult.getURIParseResult):
+ * Walk rules:
  *
  *   Token 0 (first segment):
  *     Must match an entity by path ("members" → Entity.getEntityByPath("/members")).
@@ -86,7 +86,7 @@ function isMetaInfoCall(path) {
  *          to "allowed_values".
  *     f. None of the above → throw INVALID_URL (unknown segment).
  *
- * Versatile Phase 1 scope notes (vs SDP):
+ * Versatile Phase 1 scope notes:
  *   • Dynamic entities (isDynamicEntity)  — not implemented; skipped.
  *   • UDF field holders (isUDFFieldHolder) — not implemented; skipped.
  *   • ENUM field type detection           — not implemented; "allowed_values" covers both.
@@ -103,7 +103,7 @@ function EntityLocator(path) {
     this.convenienceOperationName  = null;
     this.convenienceOperationParam = null;
     this.firstTokenInPath          = null;
-    this.operationWithoutUnderscore = false;  // SDP compat flag
+    this.operationWithoutUnderscore = false;  // legacy compat flag
 
     if (size === 0) {
         return;  // empty path — caller will handle null entity
@@ -194,7 +194,7 @@ function EntityLocator(path) {
             //      /modules/it_procurement/records.  These are NOT the last token —
             //      something follows them.  Skip silently; the router has already
             //      captured the correct entity via right-to-left scan.
-            //   3. A legacy convenience op without the _ prefix (SDP back-compat).
+            //   3. A legacy convenience op without the _ prefix (back-compat).
             //      These are the last token with nothing following.
             var asEntity = Entity.getEntityByPath(token);
             if (asEntity) {
@@ -208,7 +208,7 @@ function EntityLocator(path) {
                 // Skip — router already resolved the correct leaf entity and id.
                 // Do not set convenienceOperationName; it is not an operation.
             } else {
-                // Case 3: last token, unrecognised → legacy convenience op.
+                // Case 3: last token, unrecognised → treat as convenience op name (legacy).
                 this.operationWithoutUnderscore = true;
                 this.convenienceOperationName   = token;
             }

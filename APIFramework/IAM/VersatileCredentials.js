@@ -1,31 +1,19 @@
 /**
  * VersatileCredentials — Per-request identity + org context value object.
  *
- * SDP equivalent: SDPCredentials
- *
- * In SDP, SDPCredentials is a thread-local object populated by IAMListener /
- * SDPCredentialsFilter and carried through the entire request lifecycle. It holds
- * the resolved technician/user identity, tenant dataspace, and role set.
- *
- * In Versatile (Node.js, single-threaded), we attach this object to the Express
- * request as `req.$credentials`. It is populated exactly once per request by
- * OrgContextFilter after all three resolution steps succeed:
- *   1. SecurityGatewayFilter → verifies JWT  → sets req.authAccountId
- *   2. OrgContextFilter      → resolves org  → sets req.orgId, rangeStart, rangeEnd
+ * Immutable value object attached to the Express request as `req.$credentials`.
+ * Populated exactly once per request by OrgContextFilter after all resolution
+ * steps succeed:
+ *   1. SecurityGatewayFilter → verifies JWT        → sets req.authAccountId
+ *   2. OrgContextFilter      → resolves org        → sets req.orgId, rangeStart, rangeEnd
  *   3. OrgContextFilter      → resolves membership → sets req.memberId
- *   4. OrgContextFilter      → resolves roles → constructs VersatileCredentials
- *      → sets req.$credentials
+ *   4. OrgContextFilter      → resolves roles      → constructs VersatileCredentials
  *
- * After OrgContextFilter runs, ALL downstream layers use req.$credentials:
- *
- *   XMLSecurityMiddleware  → req.$credentials.roles        (role whitelist check)
- *   AbstractEntityHandler  → req.$credentials.memberId     (created_by / audit)
- *   AbstractEntityHandler  → req.$credentials.rangeStart/End (range-scoped queries)
- *   DBUtils / Knex queries → req.$credentials.rangeStart/End (BETWEEN scoping)
- *   Listeners              → req.$credentials              (full context for side effects)
- *
- * The object is intentionally immutable after construction (Object.freeze).
- * No code outside OrgContextFilter should modify or replace req.$credentials.
+ * After OrgContextFilter runs, ALL downstream layers read from req.$credentials:
+ *   XMLSecurityMiddleware  → roles        (role whitelist check)
+ *   Handler / ORM          → memberId     (created_by / audit)
+ *   DataAccess             → rangeStart/End (range-scoped queries)
+ *   Listeners              → full context  (side effects)
  *
  * Field inventory:
  * ┌─────────────────────┬────────────────────────────────────────────────────────┐
@@ -39,18 +27,6 @@
  * │ rangeEnd            │ org_id_ranges.range_end   — upper bound of org PK range│
  * │ roles               │ string[] — role names from user_roles + roles tables   │
  * └─────────────────────┴────────────────────────────────────────────────────────┘
- *
- * SDP → Versatile mapping:
- * ┌──────────────────────────────────┬─────────────────────────────────┐
- * │ SDP SDPCredentials field         │ VersatileCredentials field       │
- * ├──────────────────────────────────┼─────────────────────────────────┤
- * │ getAccountId()                   │ authAccountId                   │
- * │ getLoginName() / getUserId()     │ memberId                        │
- * │ getTenantId()                    │ orgId                           │
- * │ getDataspaceName()               │ orgHandle                       │
- * │ getRoles()                       │ roles                           │
- * │ ThreadLocal dataspace boundaries │ rangeStart / rangeEnd           │
- * └──────────────────────────────────┴─────────────────────────────────┘
  */
 class VersatileCredentials {
 
@@ -79,7 +55,7 @@ class VersatileCredentials {
         Object.freeze(this);  // strict mode required for assignment errors on frozen objects
     }
 
-    // ─── Convenience helpers (mirrors SDP SDPCredentials API style) ───────────
+    // ─── Convenience helpers ──────────────────────────────────────────────────
 
     /** Returns true if the member holds the given role name in this org. */
     hasRole(roleName) {

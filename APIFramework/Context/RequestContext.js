@@ -5,15 +5,17 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 /**
  * RequestContext — Per-request ALS (AsyncLocalStorage) wrapper.
  *
- * SDP equivalent: SDPCredentials thread-local
- *
- * In SDP, credentials and tenant context were stored in a ThreadLocal that was
- * available to any class in the call stack without passing it as a parameter.
- * In Node.js (single-threaded, async), AsyncLocalStorage is the exact equivalent:
- * the store is bound to one async call chain and never leaks across concurrent requests.
+ * Stores per-request credentials and org context in AsyncLocalStorage so any
+ * layer in the call stack (handler, validator, listener, ORM) can read them
+ * without parameter passing. The store is bound to one async call chain and
+ * never leaks across concurrent requests.
  *
  * ── Store shape ──────────────────────────────────────────────────────────────
- *   { credentials: VersatileCredentials, apiRequest: APIRequest }
+ *   {
+ *     credentials: VersatileCredentials,
+ *     apiRequest:  APIRequest,
+ *     transaction: Knex.Transaction | null   ← active trx, managed by TransactionManager
+ *   }
  *
  * ── Who sets it ──────────────────────────────────────────────────────────────
  *   DefaultRouterHandler — the single entry point for ALL entity XML-based API calls.
@@ -25,6 +27,7 @@ const { AsyncLocalStorage } = require('node:async_hooks');
  *   DataAccess.get()    — auto-injects range criteria on every scoped SELECT
  *   DataAccess.getOne() — auto-injects range criteria on every scoped SELECT
  *   PreDefaultEntityHandler — reads orgId for SequenceGenerator
+ *   TransactionManager  — reads/writes the transaction slot for reentrancy checks
  *   Listeners, validators, custom handlers — read memberId, orgId, roles, apiRequest
  *
  * ── Method summary ───────────────────────────────────────────────────────────
@@ -38,6 +41,9 @@ const { AsyncLocalStorage } = require('node:async_hooks');
  *   RequestContext.getRoles()            — string[] of role names
  *   RequestContext.getAuthAccountId()    — iam_auth_accounts.auth_account_id
  *   RequestContext.hasContext()          — true if inside a run() scope
+ *   RequestContext.getTransaction()      — returns active Knex trx or null
+ *   RequestContext.setTransaction(trx)   — stores active trx (called by TransactionManager)
+ *   RequestContext.clearTransaction()    — clears trx after commit/rollback
  */
 
 // One ALS instance lives for the entire server lifetime.
@@ -62,7 +68,8 @@ class RequestContext {
      * @returns {Promise<any>}                     whatever fn() returns
      */
     static run(credentials, apiRequest, fn) {
-        return _als.run({ credentials, apiRequest }, fn);
+        // transaction slot starts null — TransactionManager sets it on beginTxn()
+        return _als.run({ credentials, apiRequest, transaction: null }, fn);
     }
 
     /**
@@ -127,6 +134,51 @@ class RequestContext {
      */
     static hasContext() {
         return _als.getStore() != null;
+    }
+
+    // ── Transaction slot — managed exclusively by TransactionManager ──────────
+    //
+    // These three methods are the only read/write points for the transaction slot.
+    // No other layer should touch the transaction slot directly.
+    // TransactionManager is the sole owner of begin/commit/rollback logic.
+
+    /**
+     * Returns the active Knex transaction for this request, or null if none is open.
+     *
+     * Used by TransactionManager.beginTxn() to detect an already-open transaction
+     * (reentrancy check) before calling knex.transaction() again.
+     *
+     * @returns {import('knex').Knex.Transaction | null}
+     */
+    static getTransaction() {
+        return _als.getStore()?.transaction ?? null;
+    }
+
+    /**
+     * Stores an active Knex transaction in the ALS store for this request.
+     *
+     * Called by TransactionManager.beginTxn() immediately after knex.transaction()
+     * returns a new trx. Any nested handler/utility in this async call chain will
+     * then see it via getTransaction() and join rather than opening a new one.
+     *
+     * @param {import('knex').Knex.Transaction} trx
+     */
+    static setTransaction(trx) {
+        const store = _als.getStore();
+        if (store) store.transaction = trx;
+    }
+
+    /**
+     * Clears the transaction slot after a commit or rollback.
+     *
+     * Called by TransactionManager after the outermost transaction owner completes.
+     * Ensures the next logical operation (e.g. a subsequent handler call on the same
+     * request, or a nested utility that comes after the outer commit) does not
+     * accidentally join a closed transaction.
+     */
+    static clearTransaction() {
+        const store = _als.getStore();
+        if (store) store.transaction = null;
     }
 }
 
