@@ -12,7 +12,6 @@ function APIRequest(request, response) {
     this.operation    = request.method;
     this.result       = {};
     this.response     = response;
-    this.isSubRequest = false;
 
     this.entity                    = locatorResult.currentEntity;
     this.entityId                  = locatorResult.currentEntityId;
@@ -26,6 +25,46 @@ function APIRequest(request, response) {
 
     this.dataObject       = null;
     this.entityBeanObject = null;
+
+    // ── Request policy ────────────────────────────────────────────────────────
+    // Controls which pipeline stages run and how the request is treated.
+    // HTTP client requests always have fromClient=true (set here).
+    // Programmatic internal calls (cascade delete, automation, jobs) construct
+    // an APIRequest manually and set fromClient=false along with any other flags.
+    //
+    // Rules (from internal-api-and-subrequest-mechanism.md §3):
+    //   fromClient=true  → readonly fields rejected; FROM_CLIENT listeners fire; CSRF enforced
+    //   fromClient=false → readonly/internal fields writable; system-driven listeners suppressed
+    //   isCascadeDelete  → signal to validators/listeners that this is a parent cascade
+    //   skipBasicValidation → bypasses nullable/maxlen/regex checks (custom validate() still runs)
+    //   skipAuthorization   → bypasses isAuthorized() — only for fully trusted internal contexts
+    this.requestPolicy = {
+        fromClient:          true,    // always true for real HTTP requests; false for internal calls
+        isCascadeDelete:     false,
+        skipBasicValidation: false,
+        skipAuthorization:   false,
+        isImport:            false
+    };
+
+    // ── Transient values ─────────────────────────────────────────────────────
+    // Cross-component scratch space scoped to this request.
+    // Used by handlers/validators/listeners to pass data without threading parameters.
+    // Key lookup is CASE-SENSITIVE — always use defined constants, never hardcoded strings.
+    // Cleared automatically when the request lifecycle ends.
+    this._transientValues = new Map();
+
+    this.getTransientValue = function (key) {
+        return this._transientValues.get(key) ?? null;
+    };
+
+    this.setTransientValue = function (key, value) {
+        this._transientValues.set(key, value);
+    };
+
+    // ── Sub-request flag ──────────────────────────────────────────────────────
+    // true when this request participates in a parent's already-open transaction
+    // (e.g. cascade delete sub-requests). The child does not open its own transaction.
+    this.isSubRequest = false;
 }
 
 /**
